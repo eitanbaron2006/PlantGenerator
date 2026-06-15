@@ -1,0 +1,6 @@
+{
+  "name": "Low-Poly Tree and Plant Generator",
+  "description": "An interactive 3D generator to create, customize, and export clean Three.js/React Three Fiber code of low-poly trees and plants.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
