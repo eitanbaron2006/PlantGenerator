@@ -779,19 +779,332 @@ export function buildTree3D(params: TreeParams): THREE.Group {
 
 /**
  * Returns raw copy-pasteable JavaScript code for creating the model in active Three.js scenes
- */
-/**
- * Returns raw copy-pasteable JavaScript code for creating the model in active Three.js scenes
+ * Customized specifically for the selected species: ${params.species} (foliage: ${params.foliageType})
  */
 export function getThreeJsCode(params: TreeParams): string {
+  const hasBranches = ["oak", "pine", "bonsai", "shrub"].includes(params.species);
+  const isCactus = params.foliageType === "cactus-arms";
+
+  // Build the foliage-specific drawing snippet
+  let foliageCode = "";
+  if (params.foliageType === "spherical") {
+    foliageCode = `  // 2. GENERATE MAIN FOLIAGE (${params.species.toUpperCase()} spherical clusters)
+  const foliageGroup = new THREE.Group();
+  foliageGroup.position.copy(trunkTip);
+  treeGroup.add(foliageGroup);
+
+  const foliageSize = ${params.foliageSize};
+  const foliageDensity = ${params.foliageDensity};
+
+  for (let j = 0; j < foliageDensity; j++) {
+    const radius = foliageSize * (0.6 + random() * 0.4);
+    const geo = new THREE.IcosahedronGeometry(radius, 1);
+    const useAlt = random() > 0.55;
+    const mesh = new THREE.Mesh(geo, useAlt ? alternateMaterial : foliageMaterial);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+
+    if (j > 0) {
+      mesh.position.set(
+        (random() - 0.5) * foliageSize * 1.1,
+        (random() - 0.2) * foliageSize * 0.8,
+        (random() - 0.5) * foliageSize * 1.1
+      );
+    } else {
+      mesh.position.set(0, 0, 0);
+    }
+    foliageGroup.add(mesh);
+  }`;
+  } else if (params.foliageType === "conic") {
+    foliageCode = `  // 2. GENERATE MAIN FOLIAGE (Cone)
+  const foliageGroup = new THREE.Group();
+  foliageGroup.position.copy(trunkTip);
+  treeGroup.add(foliageGroup);
+
+  const foliageSize = ${params.foliageSize};
+  const foliageHeight = ${params.foliageHeight};
+
+  const coneGeo = new THREE.ConeGeometry(foliageSize, foliageHeight, Math.max(4, ${params.trunkSegments}), 1);
+  const leafMesh = new THREE.Mesh(coneGeo, foliageMaterial);
+  leafMesh.castShadow = true;
+  leafMesh.receiveShadow = true;
+  leafMesh.position.y = foliageHeight / 2 - 0.2;
+  foliageGroup.add(leafMesh);`;
+  } else if (params.foliageType === "tiered-cone") {
+    foliageCode = `  // 2. GENERATE MAIN FOLIAGE (Stacked Pine Tiers)
+  const foliageGroup = new THREE.Group();
+  foliageGroup.position.copy(trunkTip);
+  treeGroup.add(foliageGroup);
+
+  const totalTiers = ${params.foliageTiers};
+  const foliageSize = ${params.foliageSize};
+  const foliageHeight = ${params.foliageHeight};
+  const tierHeight = foliageHeight / totalTiers;
+  
+  for (let t = 0; t < totalTiers; t++) {
+    const tierFactor = (totalTiers - t) / totalTiers;
+    const tierRadius = foliageSize * (0.35 + tierFactor * 0.65);
+    const coneHeight = tierHeight * 1.4;
+    
+    const coneGeo = new THREE.ConeGeometry(
+      tierRadius,
+      coneHeight,
+      Math.max(4, ${params.trunkSegments}),
+      1
+    );
+    
+    const isOdd = t % 2 === 0;
+    const mesh = new THREE.Mesh(coneGeo, isOdd ? foliageMaterial : alternateMaterial);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.position.y = (t * (tierHeight * 0.85)) + (coneHeight / 2) - 0.3;
+    mesh.rotation.y = t * 0.45;
+    foliageGroup.add(mesh);
+  }`;
+  } else if (params.foliageType === "palm-fronds") {
+    foliageCode = `  // 2. GENERATE MAIN FOLIAGE (Palm Fronds)
+  const foliageGroup = new THREE.Group();
+  foliageGroup.position.copy(trunkTip);
+  treeGroup.add(foliageGroup);
+
+  const frondCount = ${params.foliageDensity} + 4;
+  const size = ${params.foliageSize};
+  
+  for (let f = 0; f < frondCount; f++) {
+    const baseAngle = (f / frondCount) * Math.PI * 2;
+    const frondPivot = new THREE.Group();
+    frondPivot.rotation.y = baseAngle;
+    
+    const length = size * (0.8 + random() * 0.3);
+    const thickness = 0.03 + random() * 0.03;
+    const width = 0.2 + random() * 0.15;
+    
+    // Segmented palm curve
+    let cumulativeParent = frondPivot;
+    for (let s = 0; s < 3; s++) {
+      const segGeo = new THREE.BoxGeometry(width * (1.2 - s * 0.35), thickness, length / 3);
+      const leafMat = s % 2 === 0 ? foliageMaterial : alternateMaterial;
+      const frondMesh = new THREE.Mesh(segGeo, leafMat);
+      frondMesh.castShadow = true;
+      frondMesh.receiveShadow = true;
+      frondMesh.position.set(0, 0, s === 0 ? (length / 3) / 2 : (length / 3));
+      frondMesh.rotation.x = -0.15 - (s * 0.12);
+      
+      const segGroup = new THREE.Group();
+      segGroup.add(frondMesh);
+      if (s > 0) {
+        segGroup.position.set(0, 0, (length / 3) / 2);
+      }
+      cumulativeParent.add(segGroup);
+      cumulativeParent = segGroup;
+    }
+    frondPivot.rotation.x = 0.25;
+    foliageGroup.add(frondPivot);
+  }`;
+  } else if (params.foliageType === "shroom-cap") {
+    foliageCode = `  // 2. GENERATE MAIN FOLIAGE (Mushroom Cap & Spots)
+  const foliageGroup = new THREE.Group();
+  foliageGroup.position.copy(trunkTip);
+  treeGroup.add(foliageGroup);
+
+  const capRadius = ${params.foliageSize};
+  const capHeight = ${params.foliageHeight};
+  const numSegments = ${params.trunkSegments} * 2;
+
+  const capGeo = new THREE.CylinderGeometry(capRadius * 0.1, capRadius, capHeight, numSegments, 1, false);
+  const capMesh = new THREE.Mesh(capGeo, foliageMaterial);
+  capMesh.castShadow = true;
+  capMesh.receiveShadow = true;
+  capMesh.position.y = capHeight / 2;
+  foliageGroup.add(capMesh);
+
+  const gillGeo = new THREE.CylinderGeometry(capRadius * 1.01, capRadius * 0.6, 0.1, numSegments, 1);
+  const gillMesh = new THREE.Mesh(gillGeo, alternateMaterial);
+  gillMesh.position.y = 0.05;
+  foliageGroup.add(gillMesh);
+
+  const numSpots = Math.min(10, ${params.foliageDensity});
+  for (let s = 0; s < numSpots; s++) {
+    const spotGeo = new THREE.BoxGeometry(0.12, 0.08, 0.12);
+    const spotMesh = new THREE.Mesh(spotGeo, alternateMaterial);
+    const theta = random() * Math.PI * 2;
+    const phi = random() * Math.PI * 0.35;
+    
+    const spotRad = capRadius * 0.85;
+    const sx = Math.sin(phi) * Math.cos(theta);
+    const sz = Math.sin(phi) * Math.sin(theta);
+    const sy = Math.cos(phi) * capHeight * 0.75 + 0.1;
+    
+    spotMesh.position.set(sx * spotRad, sy, sz * spotRad);
+    spotMesh.rotation.set(phi * Math.sin(theta), theta, phi * Math.cos(theta));
+    foliageGroup.add(spotMesh);
+  }`;
+  } else if (params.foliageType === "cactus-arms") {
+    foliageCode = `  // 2. GENERATE MAIN FOLIAGE (Cactus Arms & Blossom Flowers)
+  const armCount = Math.min(4, ${params.foliageDensity});
+  const armHeight = ${params.foliageHeight};
+  const armRadius = ${params.trunkRadius} * 0.72;
+  const elbowLen = ${params.foliageSize} * 0.38;
+
+  for (let a = 0; a < armCount; a++) {
+    const t = 0.3 + a * 0.18;
+    const trunkPosAtT = getTrunkPointAt(t);
+    const specificArmHeight = armHeight * (0.55 + random() * 0.3);
+    const specificArmRadius = armRadius * (1 - t * ${params.trunkTaper});
+    
+    const angle = (a / armCount) * Math.PI * 1.8 + (random() - 0.5) * 0.25;
+    const dirX = Math.cos(angle);
+    const dirZ = Math.sin(angle);
+
+    const armPoints = [];
+    armPoints.push(new THREE.Vector3(trunkPosAtT.x, trunkPosAtT.y, trunkPosAtT.z));
+    armPoints.push(new THREE.Vector3(trunkPosAtT.x + dirX * specificArmRadius, trunkPosAtT.y, trunkPosAtT.z + dirZ * specificArmRadius));
+    
+    const shoulderX = trunkPosAtT.x + dirX * (specificArmRadius + elbowLen * 0.85);
+    const shoulderZ = trunkPosAtT.z + dirZ * (specificArmRadius + elbowLen * 0.85);
+    armPoints.push(new THREE.Vector3(shoulderX, trunkPosAtT.y, shoulderZ));
+
+    const elbowX = trunkPosAtT.x + dirX * (specificArmRadius + elbowLen);
+    const elbowZ = trunkPosAtT.z + dirZ * (specificArmRadius + elbowLen);
+    const elbowY = trunkPosAtT.y + specificArmHeight * 0.15;
+    armPoints.push(new THREE.Vector3(elbowX, elbowY, elbowZ));
+
+    const tipY = trunkPosAtT.y + specificArmHeight;
+    armPoints.push(new THREE.Vector3(elbowX, (elbowY + tipY) * 0.5, elbowZ));
+    armPoints.push(new THREE.Vector3(elbowX, tipY, elbowZ));
+
+    const armGeo = createSweepGeometry(armPoints, specificArmRadius, specificArmRadius * 0.82, ${params.trunkSegments});
+    const armMesh = new THREE.Mesh(armGeo, foliageMaterial);
+    armMesh.castShadow = true;
+    armMesh.receiveShadow = true;
+    treeGroup.add(armMesh);
+
+    if (random() > 0.4) {
+      const flowerMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(specificArmRadius * 0.65, 0), alternateMaterial);
+      flowerMesh.position.set(elbowX, tipY + 0.05, elbowZ);
+      treeGroup.add(flowerMesh);
+    }
+  }
+
+  // Top center flower
+  const topFlower = new THREE.Mesh(new THREE.IcosahedronGeometry(${params.trunkRadius} * 0.75, 1), alternateMaterial);
+  topFlower.position.copy(trunkTip);
+  treeGroup.add(topFlower);`;
+  } else if (params.foliageType === "bushy-tufts") {
+    foliageCode = `  // 2. GENERATE MAIN FOLIAGE (Bushy Tufts)
+  const foliageGroup = new THREE.Group();
+  foliageGroup.position.copy(trunkTip);
+  treeGroup.add(foliageGroup);
+
+  const foliageSize = ${params.foliageSize};
+  const foliageDensity = ${params.foliageDensity};
+  const maxTufts = foliageDensity + 3;
+
+  for (let t = 0; t < maxTufts; t++) {
+    const radius = foliageSize * (0.5 + random() * 0.55);
+    const bushyGeo = new THREE.DodecahedronGeometry(radius, 0);
+    const isOdd = t % 2 === 0;
+    const tuftMesh = new THREE.Mesh(bushyGeo, isOdd ? alternateMaterial : foliageMaterial);
+    tuftMesh.castShadow = true;
+    tuftMesh.receiveShadow = true;
+
+    tuftMesh.position.set(
+      (random() - 0.5) * foliageSize * 1.6,
+      (random() - 0.5) * foliageSize * 0.6,
+      (random() - 0.5) * foliageSize * 1.6
+    );
+    foliageGroup.add(tuftMesh);
+  }`;
+  }
+
+  // Segment branches code
+  let branchCode = "";
+  if (hasBranches) {
+    branchCode = `
+  // Secondary dynamic branches (proportional to trunk height & thickness)
+  const branchCount = "${params.species}" === "oak" ? 3 : "${params.species}" === "bonsai" ? 2 : "${params.species}" === "shrub" ? 3 : "${params.species}" === "pine" ? 4 : 0;
+  for (let b = 0; b < branchCount; b++) {
+    const t = 0.35 + (b / branchCount) * 0.45 + (random() * 0.08);
+    const parentPos = getTrunkPointAt(t);
+    const r_at_t = trunkRadius * (1 - t * trunkTaper);
+    const bRad = r_at_t * 0.45;
+
+    const angle = (b / branchCount) * Math.PI * 2 + (random() - 0.5) * 0.5;
+    const dirX = Math.cos(angle);
+    const dirZ = Math.sin(angle);
+
+    const maxBranchLen = trunkHeight * 0.35 * (1 - t * 0.4);
+    const branchLen = maxBranchLen * (0.8 + random() * 0.5);
+
+    const branchPoints = [];
+    const steps = 5;
+    for (let k = 0; k <= steps; k++) {
+      const bp = k / steps;
+      const hDist = bp * branchLen;
+      const vDist = Math.sin(bp * Math.PI * 0.45) * branchLen * 0.45 + Math.pow(bp, 2) * branchLen * 0.15;
+      branchPoints.push(new THREE.Vector3(
+        parentPos.x + hDist * dirX,
+        parentPos.y + vDist,
+        parentPos.z + hDist * dirZ
+      ));
+    }
+
+    const branchGeo = createSweepGeometry(branchPoints, bRad, bRad * 0.15, trunkSegments);
+    const branchMesh = new THREE.Mesh(branchGeo, trunkMaterial);
+    branchMesh.castShadow = true;
+    branchMesh.receiveShadow = true;
+    trunkGroup.add(branchMesh);
+
+    // Branch tip foliage cluster
+    const branchTip = branchPoints[branchPoints.length - 1];
+    const bFoliageSize = ${params.foliageSize} * (0.4 + random() * 0.4);
+    const bFoliageHeight = ${params.foliageHeight} * (0.4 + random() * 0.4);
+
+    const branchFoliageGroup = new THREE.Group();
+    branchFoliageGroup.position.copy(branchTip);
+    treeGroup.add(branchFoliageGroup);
+
+    if ("${params.foliageType}" === "spherical") {
+      const mesh1 = new THREE.Mesh(new THREE.IcosahedronGeometry(bFoliageSize, 1), foliageMaterial);
+      mesh1.castShadow = true;
+      branchFoliageGroup.add(mesh1);
+
+      const mesh2 = new THREE.Mesh(new THREE.IcosahedronGeometry(bFoliageSize * 0.8, 1), alternateMaterial);
+      mesh2.castShadow = true;
+      mesh2.position.set(
+        (random() - 0.5) * bFoliageSize * 0.5,
+        (random() - 0.2) * bFoliageSize * 0.3,
+        (random() - 0.5) * bFoliageSize * 0.5
+      );
+      branchFoliageGroup.add(mesh2);
+    } else if ("${params.foliageType}" === "conic" || "${params.foliageType}" === "tiered-cone") {
+      const mesh = new THREE.Mesh(new THREE.ConeGeometry(bFoliageSize, bFoliageHeight, Math.max(4, trunkSegments)), foliageMaterial);
+      mesh.castShadow = true;
+      branchFoliageGroup.add(mesh);
+    } else if ("${params.foliageType}" === "bushy-tufts") {
+      const tuftsCount = 2;
+      for (let j = 0; j < tuftsCount; j++) {
+        const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(bFoliageSize * (0.7 + j * 0.3), 0), j % 2 === 0 ? alternateMaterial : foliageMaterial);
+        mesh.castShadow = true;
+        mesh.position.set(
+          (random() - 0.5) * bFoliageSize * 0.4,
+          (random() - 0.5) * bFoliageSize * 0.2,
+          (random() - 0.5) * bFoliageSize * 0.4
+        );
+        branchFoliageGroup.add(mesh);
+      }
+    }
+  }`;
+  }
+
   return `/**
- * Procedural Low-Poly Tree Generator
- * Generated with Low-Poly Tree and Plant Generator Code Utility
- * Model species: ${params.species.toUpperCase()}
+ * Procedural Low-Poly Tree - Species SPECIFIC Template
+ * Generated for: ${params.species.toUpperCase()}
+ * Foliage geometry model: ${params.foliageType}
  */
 import * as THREE from 'three';
 
-// Parallel Transport Sweep Geometry Helper
+// 3D Point Transport Sweeping Pipeline (Trunks and Arms)
 export function createSweepGeometry(points, startRadius, endRadius, radialSegments) {
   const numPoints = points.length;
   if (numPoints < 2) return new THREE.BufferGeometry();
@@ -911,7 +1224,7 @@ export function createLowPolyTree() {
   const treeGroup = new THREE.Group();
   treeGroup.name = "low_poly_tree";
 
-  // Flat shaded materials
+  // Flat shaded materials optimized for species colors
   const trunkMaterial = new THREE.MeshStandardMaterial({
     color: "${params.trunkColor}",
     flatShading: true,
@@ -975,9 +1288,166 @@ export function createLowPolyTree() {
     return seed / 4294967296;
   };
 
-  // Secondary dynamic branches
-  const hasBranches = ["oak", "pine", "bonsai", "shrub"].includes("${params.species}");
+${branchCode}
+
+${foliageCode}
+
+  return treeGroup;
+}
+`;
+}
+
+/**
+ * Returns raw copy-pasteable React Three Fiber code for standard react-three-fiber projects
+ * Cleaned up to ONLY output the selected specimen components and hooks
+ */
+export function getReactThreeFiberCode(params: TreeParams): string {
+  const radSegs = params.trunkSegments;
+  const hasBranches = ["oak", "pine", "bonsai", "shrub"].includes(params.species);
+  const isCactus = params.foliageType === "cactus-arms";
+
+  const verticalSegmentsCount = 8;
+  const curvePoints: THREE.Vector3[] = [];
+  for (let i = 0; i <= verticalSegmentsCount; i++) {
+    const progress = i / verticalSegmentsCount;
+    const angle = progress * Math.PI;
+    const dx = Math.sin(angle) * params.trunkCurvature * 0.4;
+    const dz = (1 - Math.cos(angle)) * params.trunkCurvature * 0.2;
+    curvePoints.push(new THREE.Vector3(dx, progress * params.trunkHeight, dz));
+  }
+  const trunkTip = curvePoints[curvePoints.length - 1];
+
+  // Specific lists of code parts
+  let subMeshMemoCalc = "";
+  let jsxMeshRender = "";
+
+  if (params.foliageType === "spherical") {
+    subMeshMemoCalc = `    // Core spherical foliage clusters
+    const foliageClusterList = [];
+    for (let j = 0; j < ${params.foliageDensity}; j++) {
+      const rad = ${params.foliageSize} * (0.6 + random() * 0.4);
+      const off = j === 0 ? [0,0,0] : [
+        (random() - 0.5) * ${params.foliageSize} * 1.1,
+        (random() - 0.2) * ${params.foliageSize} * 0.8,
+        (random() - 0.5) * ${params.foliageSize} * 1.1
+      ];
+      foliageClusterList.push({ radius: rad, position: off, alt: random() > 0.55 });
+    }`;
+
+    jsxMeshRender = `        {data.foliage.map((f, idx) => (
+          <mesh key={idx} position={f.position} castShadow receiveShadow>
+            <icosahedronGeometry args={[f.radius, 1]} />
+            <meshStandardMaterial color={f.alt ? "${params.foliageColorAlternate}" : "${params.foliageColor}"} flatShading roughness={0.85} />
+          </mesh>
+        ))}`;
+  } else if (params.foliageType === "conic") {
+    jsxMeshRender = `        <mesh position={[0, ${params.foliageHeight / 2 - 0.2}, 0]} castShadow receiveShadow>
+          <coneGeometry args={[${params.foliageSize}, ${params.foliageHeight}, ${Math.max(4, radSegs)}]} />
+          <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
+        </mesh>`;
+  } else if (params.foliageType === "tiered-cone") {
+    subMeshMemoCalc = `    // stacked pine cone tiers calculation
+    const foliageClusterList = [];
+    const tierHeight = ${params.foliageHeight / params.foliageTiers};
+    for (let t = 0; t < ${params.foliageTiers}; t++) {
+      const factor = (${params.foliageTiers} - t) / ${params.foliageTiers};
+      const tierRadius = ${params.foliageSize} * (0.35 + factor * 0.65);
+      const cHeight = tierHeight * 1.4;
+      foliageClusterList.push({
+        radius: tierRadius,
+        height: cHeight,
+        y: (t * (tierHeight * 0.85)) + (cHeight / 2) - 0.3,
+        rotY: t * 0.45,
+        alt: t % 2 !== 0
+      });
+    }`;
+
+    jsxMeshRender = `        {data.foliage.map((f, idx) => (
+          <mesh key={idx} position={[0, f.y, 0]} rotation={[0, f.rotY, 0]} castShadow receiveShadow>
+            <coneGeometry args={[f.radius, f.height, ${Math.max(4, radSegs)}]} />
+            <meshStandardMaterial color={f.alt ? "${params.foliageColorAlternate}" : "${params.foliageColor}"} flatShading roughness={0.85} />
+          </mesh>
+        ))}`;
+  } else if (params.foliageType === "palm-fronds") {
+    subMeshMemoCalc = `    // palm fronds length calculation
+    const foliageClusterList = [];
+    const count = ${params.foliageDensity} + 4;
+    for (let f = 0; f < count; f++) {
+      const length = ${params.foliageSize} * (0.8 + random() * 0.3);
+      foliageClusterList.push({
+        rotY: (f / count) * Math.PI * 2,
+        length,
+        alt: f % 2 !== 0
+      });
+    }`;
+
+    jsxMeshRender = `        {data.foliage.map((f, idx) => (
+          <group key={idx} rotation={[0.25, f.rotY, 0]}>
+            <mesh position={[0, 0.1, f.length * 0.5]} rotation={[-0.2, 0, 0]} castShadow>
+              <boxGeometry args={[0.3, 0.03, f.length]} />
+              <meshStandardMaterial color={f.alt ? "${params.foliageColorAlternate}" : "${params.foliageColor}"} flatShading roughness={0.85} />
+            </mesh>
+          </group>
+        ))}`;
+  } else if (params.foliageType === "shroom-cap") {
+    subMeshMemoCalc = `    // Mushroom cap spot offsets
+    const spots = [];
+    for (let s = 0; s < ${params.foliageDensity}; s++) {
+      const theta = random() * Math.PI * 2;
+      const phi = random() * Math.PI * 0.35;
+      const rad = ${params.foliageSize} * 0.85;
+      const sx = Math.sin(phi) * Math.cos(theta) * rad;
+      const sz = Math.sin(phi) * Math.sin(theta) * rad;
+      const sy = Math.cos(phi) * ${params.foliageHeight} * 0.75 + 0.1;
+      spots.push({
+        pos: [sx, sy, sz],
+        rot: [phi * Math.sin(theta), theta, phi * Math.cos(theta)]
+      });
+    }
+    const foliageClusterList = [{ spots }];`;
+
+    jsxMeshRender = `        <>
+          <mesh position={[0, ${params.foliageHeight / 2}, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[${params.foliageSize * 0.1}, ${params.foliageSize}, ${params.foliageHeight}, ${radSegs * 2}]} />
+            <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
+          </mesh>
+          <mesh position={[0, 0.05, 0]}>
+            <cylinderGeometry args={[${params.foliageSize * 1.01}, ${params.foliageSize * 0.6}, 0.1, ${radSegs * 2}]} />
+            <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
+          </mesh>
+          {data.foliage[0]?.spots?.map((s, idx) => (
+            <mesh key={idx} position={s.pos} rotation={s.rot}>
+              <boxGeometry args={[0.12, 0.08, 0.12]} />
+              <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
+            </mesh>
+          ))}
+        </>`;
+  } else if (params.foliageType === "bushy-tufts") {
+    subMeshMemoCalc = `    // dynamic bushy tufts calculation
+    const foliageClusterList = [];
+    for (let t = 0; t < ${params.foliageDensity} + 3; t++) {
+      const rad = ${params.foliageSize} * (0.5 + random() * 0.55);
+      const off = [
+        (random() - 0.5) * ${params.foliageSize} * 1.6,
+        (random() - 0.5) * ${params.foliageSize} * 0.6,
+        (random() - 0.5) * ${params.foliageSize} * 1.6
+      ];
+      foliageClusterList.push({ radius: rad, position: off });
+    }`;
+
+    jsxMeshRender = `        {data.foliage.map((f, idx) => (
+          <mesh key={idx} position={f.position} castShadow receiveShadow>
+            <dodecahedronGeometry args={[f.radius, 0]} />
+            <meshStandardMaterial color={idx % 2 === 0 ? "${params.foliageColor}" : "${params.foliageColorAlternate}"} flatShading roughness={0.85} />
+          </mesh>
+        ))}`;
+  }
+
+  // Branches memo builder
+  let memoBranchBuilders = "";
   if (hasBranches) {
+    memoBranchBuilders = `
+    const branchesList = [];
     const branchCount = "${params.species}" === "oak" ? 3 : "${params.species}" === "bonsai" ? 2 : "${params.species}" === "shrub" ? 3 : "${params.species}" === "pine" ? 4 : 0;
     for (let b = 0; b < branchCount; b++) {
       const t = 0.35 + (b / branchCount) * 0.45 + (random() * 0.08);
@@ -1005,280 +1475,141 @@ export function createLowPolyTree() {
         ));
       }
 
-      const branchGeo = createSweepGeometry(branchPoints, bRad, bRad * 0.15, trunkSegments);
-      const branchMesh = new THREE.Mesh(branchGeo, trunkMaterial);
-      branchMesh.castShadow = true;
-      branchMesh.receiveShadow = true;
-      trunkGroup.add(branchMesh);
-
-      // Branch tip foliage
+      const bGeo = createSweepGeometry(branchPoints, bRad, bRad * 0.15, trunkSegments);
       const branchTip = branchPoints[branchPoints.length - 1];
       const bFoliageSize = ${params.foliageSize} * (0.4 + random() * 0.4);
       const bFoliageHeight = ${params.foliageHeight} * (0.4 + random() * 0.4);
 
-      const branchFoliageGroup = new THREE.Group();
-      branchFoliageGroup.position.copy(branchTip);
-      treeGroup.add(branchFoliageGroup);
-
-      if ("${params.foliageType}" === "spherical") {
-        const mesh1 = new THREE.Mesh(new THREE.IcosahedronGeometry(bFoliageSize, 1), foliageMaterial);
-        mesh1.castShadow = true;
-        branchFoliageGroup.add(mesh1);
-
-        const mesh2 = new THREE.Mesh(new THREE.IcosahedronGeometry(bFoliageSize * 0.8, 1), alternateMaterial);
-        mesh2.castShadow = true;
-        mesh2.position.set(
-          (random() - 0.5) * bFoliageSize * 0.5,
-          (random() - 0.2) * bFoliageSize * 0.3,
-          (random() - 0.5) * bFoliageSize * 0.5
-        );
-        branchFoliageGroup.add(mesh2);
-      } else if ("${params.foliageType}" === "conic" || "${params.foliageType}" === "tiered-cone") {
-        const mesh = new THREE.Mesh(new THREE.ConeGeometry(bFoliageSize, bFoliageHeight, Math.max(4, trunkSegments)), foliageMaterial);
-        mesh.castShadow = true;
-        branchFoliageGroup.add(mesh);
-      } else if ("${params.foliageType}" === "bushy-tufts") {
-        const tuftsCount = 2;
-        for (let j = 0; j < tuftsCount; j++) {
-          const mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(bFoliageSize * (0.7 + j * 0.3), 0), j % 2 === 0 ? alternateMaterial : foliageMaterial);
-          mesh.castShadow = true;
-          mesh.position.set(
-            (random() - 0.5) * bFoliageSize * 0.4,
-            (random() - 0.5) * bFoliageSize * 0.2,
-            (random() - 0.5) * bFoliageSize * 0.4
-          );
-          branchFoliageGroup.add(mesh);
-        }
-      }
-    }
+      branchesList.push({
+        geometry: bGeo,
+        tip: [branchTip.x, branchTip.y, branchTip.z],
+        foliageSize: bFoliageSize,
+        foliageHeight: bFoliageHeight,
+        seed: random()
+      });
+    }`;
+  } else {
+    memoBranchBuilders = `    const branchesList = [];`;
   }
 
-  // 2. GENERATE MAIN FOLIAGE
-  const foliageGroup = new THREE.Group();
-  foliageGroup.position.copy(trunkTip);
-  treeGroup.add(foliageGroup);
-
-  const foliageType = "${params.foliageType}";
-  const foliageSize = ${params.foliageSize};
-  const foliageHeight = ${params.foliageHeight};
-  const foliageDensity = ${params.foliageDensity};
-  const foliageTiers = ${params.foliageTiers};
-
-  if (foliageType === "spherical") {
-    for (let j = 0; j < foliageDensity; j++) {
-      const radius = foliageSize * (0.6 + random() * 0.4);
-      const geo = new THREE.IcosahedronGeometry(radius, 1);
-      const useAlt = random() > 0.55;
-      const mesh = new THREE.Mesh(geo, useAlt ? alternateMaterial : foliageMaterial);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-
-      if (j > 0) {
-        mesh.position.set(
-          (random() - 0.5) * foliageSize * 1.1,
-          (random() - 0.2) * foliageSize * 0.8,
-          (random() - 0.5) * foliageSize * 1.1
-        );
-      }
-      foliageGroup.add(mesh);
-    }
-  } else if (foliageType === "conic") {
-    const geo = new THREE.ConeGeometry(foliageSize, foliageHeight, Math.max(4, trunkSegments), 1);
-    const mesh = new THREE.Mesh(geo, foliageMaterial);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.position.y = foliageHeight / 2 - 0.2;
-    foliageGroup.add(mesh);
-  } else if (foliageType === "tiered-cone") {
-    const tierHeight = foliageHeight / foliageTiers;
-    for (let t = 0; t < foliageTiers; t++) {
-      const factor = (foliageTiers - t) / foliageTiers;
-      const tierRadius = foliageSize * (0.35 + factor * 0.65);
-      const cHeight = tierHeight * 1.4;
-      const geo = new THREE.ConeGeometry(tierRadius, cHeight, Math.max(4, trunkSegments));
-      const isOdd = t % 2 === 0;
-      const mesh = new THREE.Mesh(geo, isOdd ? foliageMaterial : alternateMaterial);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.position.y = (t * (tierHeight * 0.85)) + (cHeight / 2) - 0.3;
-      mesh.rotation.y = t * 0.45;
-      foliageGroup.add(mesh);
-    }
-  } else if (foliageType === "palm-fronds") {
-    const count = foliageDensity + 4;
-    for (let f = 0; f < count; f++) {
-      const pivot = new THREE.Group();
-      pivot.rotation.y = (f / count) * Math.PI * 2;
-      const length = foliageSize * (0.8 + random() * 0.3);
-      const thickness = 0.04;
-      const width = 0.25;
-
-      let parent = pivot;
-      for (let s = 0; s < 3; s++) {
-        const segGeo = new THREE.BoxGeometry(width * (1.2 - s*0.35), thickness, length / 3);
-        const mat = s % 2 === 0 ? foliageMaterial : alternateMaterial;
-        const mesh = new THREE.Mesh(segGeo, mat);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        mesh.position.set(0, 0, s === 0 ? (length / 3) / 2 : (length / 3));
-        mesh.rotation.x = -0.15 - (s * 0.12);
-
-        const segGroup = new THREE.Group();
-        segGroup.add(mesh);
-        if (s > 0) {
-          segGroup.position.set(0, 0, (length / 3) / 2);
-        }
-        parent.add(segGroup);
-        parent = segGroup;
-      }
-      pivot.rotation.x = 0.25;
-      foliageGroup.add(pivot);
-    }
-  } else if (foliageType === "shroom-cap") {
-    const capGeo = new THREE.CylinderGeometry(foliageSize * 0.1, foliageSize, foliageHeight, trunkSegments * 2);
-    const capMesh = new THREE.Mesh(capGeo, foliageMaterial);
-    capMesh.castShadow = true;
-    capMesh.position.y = foliageHeight / 2;
-    foliageGroup.add(capMesh);
-
-    const gillGeo = new THREE.CylinderGeometry(foliageSize * 1.01, foliageSize * 0.6, 0.1, trunkSegments * 2);
-    const gillMesh = new THREE.Mesh(gillGeo, alternateMaterial);
-    gillMesh.position.y = 0.05;
-    foliageGroup.add(gillMesh);
-
-    for (let s = 0; s < foliageDensity; s++) {
-      const geo = new THREE.BoxGeometry(0.12, 0.08, 0.12);
-      const spot = new THREE.Mesh(geo, alternateMaterial);
-      const theta = random() * Math.PI * 2;
-      const phi = random() * Math.PI * 0.35;
-      const rad = foliageSize * 0.85;
-      const sx = Math.sin(phi) * Math.cos(theta) * rad;
-      const sz = Math.sin(phi) * Math.sin(theta) * rad;
-      const sy = Math.cos(phi) * foliageHeight * 0.75 + 0.1;
-      spot.position.set(sx, sy, sz);
-      spot.rotation.set(phi * Math.sin(theta), theta, phi * Math.cos(theta));
-      foliageGroup.add(spot);
-    }
-  } else if (foliageType === "cactus-arms") {
-    const armCount = Math.min(4, foliageDensity);
+  // Cactus arms memo builder
+  let memoCactusBuilders = "";
+  if (isCactus) {
+    memoCactusBuilders = `
+    const armsList = [];
+    const armCount = Math.min(4, ${params.foliageDensity});
     for (let a = 0; a < armCount; a++) {
       const t = 0.3 + a * 0.18;
       const trunkPosAtT = getTrunkPointAt(t);
-      const armHeight = foliageHeight * (0.55 + random() * 0.3);
-      const armRadius = trunkRadius * 0.72 * (1 - t * trunkTaper);
+      const subArmHeight = ${params.foliageHeight} * (0.55 + random() * 0.3);
+      const subArmRadius = trunkRadius * 0.72 * (1 - t * trunkTaper);
 
       const angle = (a / armCount) * Math.PI * 1.8 + (random() - 0.5) * 0.25;
       const dirX = Math.cos(angle);
       const dirZ = Math.sin(angle);
-      const elbowLen = foliageSize * 0.38;
+      const elbowLen = ${params.foliageSize} * 0.38;
 
       const armPoints = [];
       armPoints.push(new THREE.Vector3(trunkPosAtT.x, trunkPosAtT.y, trunkPosAtT.z));
-      armPoints.push(new THREE.Vector3(trunkPosAtT.x + dirX * armRadius, trunkPosAtT.y, trunkPosAtT.z + dirZ * armRadius));
+      armPoints.push(new THREE.Vector3(trunkPosAtT.x + dirX * subArmRadius, trunkPosAtT.y, trunkPosAtT.z + dirZ * subArmRadius));
       
-      const shoulderX = trunkPosAtT.x + dirX * (armRadius + elbowLen * 0.85);
-      const shoulderZ = trunkPosAtT.z + dirZ * (armRadius + elbowLen * 0.85);
+      const shoulderX = trunkPosAtT.x + dirX * (subArmRadius + elbowLen * 0.85);
+      const shoulderZ = trunkPosAtT.z + dirZ * (subArmRadius + elbowLen * 0.85);
       armPoints.push(new THREE.Vector3(shoulderX, trunkPosAtT.y, shoulderZ));
 
-      const elbowX = trunkPosAtT.x + dirX * (armRadius + elbowLen);
-      const elbowZ = trunkPosAtT.z + dirZ * (armRadius + elbowLen);
-      const elbowY = trunkPosAtT.y + armHeight * 0.15;
+      const elbowX = trunkPosAtT.x + dirX * (subArmRadius + elbowLen);
+      const elbowZ = trunkPosAtT.z + dirZ * (subArmRadius + elbowLen);
+      const elbowY = trunkPosAtT.y + subArmHeight * 0.15;
       armPoints.push(new THREE.Vector3(elbowX, elbowY, elbowZ));
 
-      const tipY = trunkPosAtT.y + armHeight;
+      const tipY = trunkPosAtT.y + subArmHeight;
       armPoints.push(new THREE.Vector3(elbowX, (elbowY + tipY) * 0.5, elbowZ));
       armPoints.push(new THREE.Vector3(elbowX, tipY, elbowZ));
 
-      const armGeo = createSweepGeometry(armPoints, armRadius, armRadius * 0.82, trunkSegments);
-      const armMesh = new THREE.Mesh(armGeo, foliageMaterial);
-      armMesh.castShadow = true;
-      armMesh.receiveShadow = true;
-      treeGroup.add(armMesh);
-
-      if (random() > 0.4) {
-        const flowerMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(armRadius * 0.65, 0), alternateMaterial);
-        flowerMesh.position.set(elbowX, tipY + 0.05, elbowZ);
-        treeGroup.add(flowerMesh);
-      }
-    }
-    const topFlower = new THREE.Mesh(new THREE.IcosahedronGeometry(trunkRadius * 0.75, 1), alternateMaterial);
-    topFlower.position.copy(trunkTip);
-    treeGroup.add(topFlower);
-  } else if (foliageType === "bushy-tufts") {
-    for (let t = 0; t < foliageDensity + 3; t++) {
-      const radius = foliageSize * (0.5 + random() * 0.55);
-      const geo = new THREE.DodecahedronGeometry(radius, 0);
-      const useAlt = t % 2 === 0;
-      const mesh = new THREE.Mesh(geo, useAlt ? alternateMaterial : foliageMaterial);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.position.set(
-        (random() - 0.5) * foliageSize * 1.6,
-        (random() - 0.5) * foliageSize * 0.6,
-        (random() - 0.5) * foliageSize * 1.6
-      );
-      foliageGroup.add(mesh);
-    }
+      const aGeo = createSweepGeometry(armPoints, subArmRadius, subArmRadius * 0.82, trunkSegments);
+      armsList.push({
+        geometry: aGeo,
+        tip: [elbowX, tipY + 0.05, elbowZ],
+        radius: subArmRadius,
+        hasFlower: random() > 0.4
+      });
+    }`;
+  } else {
+    memoCactusBuilders = `    const armsList = [];`;
   }
 
-  return treeGroup;
-}
-`;
-}
-
-/**
- * Returns raw copy-pasteable React Three Fiber code for standard react-three-fiber projects
- */
-/**
- * Returns raw copy-pasteable React Three Fiber code for standard react-three-fiber projects
- */
-export function getReactThreeFiberCode(params: TreeParams): string {
-  // Translate parameters to React structures
-  const radSegs = params.trunkSegments;
-  const trunkHeight = params.trunkHeight;
-  const trunkRadius = params.trunkRadius;
-  const trunkTaper = params.trunkTaper;
-  const trunkCurvature = params.trunkCurvature;
-  const len = params.foliageDensity;
-
-  const trunkGeoArray = createSeamlessTrunkGeometry(
-    params.trunkHeight,
-    params.trunkRadius,
-    params.trunkTaper,
-    params.trunkCurvature,
-    params.trunkSegments,
-    8
-  );
-
-  const posAttr = trunkGeoArray.getAttribute("position") as THREE.BufferAttribute;
-  const uvAttr = trunkGeoArray.getAttribute("uv") as THREE.BufferAttribute;
-  const idxArray = trunkGeoArray.getIndex()?.array as any as number[] || [];
-
-  const positionsStr = serializeFloat32Array(posAttr.array as Float32Array, 4);
-  const uvsStr = serializeFloat32Array(uvAttr.array as Float32Array, 4);
-  const indicesStr = serializeIntArray(idxArray);
-
-  const verticalSegmentsCount = 8;
-  const curvePoints: THREE.Vector3[] = [];
-  for (let i = 0; i <= verticalSegmentsCount; i++) {
-    const progress = i / verticalSegmentsCount;
-    const angle = progress * Math.PI;
-    const dx = Math.sin(angle) * params.trunkCurvature * 0.4;
-    const dz = (1 - Math.cos(angle)) * params.trunkCurvature * 0.2;
-    curvePoints.push(new THREE.Vector3(dx, progress * params.trunkHeight, dz));
+  // Branch mapping JSX segment
+  let branchesJsx = "";
+  if (hasBranches) {
+    branchesJsx = `      {/* Procedurally generated branches */}
+      {data.branches.map((b, idx) => (
+        <group key={idx}>
+          <mesh geometry={b.geometry} castShadow receiveShadow>
+            <meshStandardMaterial color="${params.trunkColor}" flatShading roughness={0.9} />
+          </mesh>
+          <group position={b.tip}>
+            {"${params.foliageType}" === "spherical" && (
+              <>
+                <mesh castShadow receiveShadow>
+                  <icosahedronGeometry args={[b.foliageSize, 1]} />
+                  <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
+                </mesh>
+                <mesh position={[b.foliageSize * 0.15, b.foliageSize * 0.12, -b.foliageSize * 0.1]} castShadow receiveShadow>
+                  <icosahedronGeometry args={[b.foliageSize * 0.8, 1]} />
+                  <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
+                </mesh>
+              </>
+            )}
+            {"${params.foliageType}" === "conic" && (
+              <mesh castShadow>
+                <coneGeometry args={[b.foliageSize, b.foliageHeight, ${Math.max(4, radSegs)}]} />
+                <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
+              </mesh>
+            )}
+            {"${params.foliageType}" === "bushy-tufts" && (
+              <mesh castShadow>
+                <dodecahedronGeometry args={[b.foliageSize, 0]} />
+                <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
+              </mesh>
+            )}
+          </group>
+        </group>
+      ))}`;
   }
-  const trunkTip = curvePoints[curvePoints.length - 1];
+
+  // Cactus mapping JSX segment
+  let cactusJsx = "";
+  if (isCactus) {
+    cactusJsx = `      {/* Procedurally generated cactus arms */}
+      {data.cactusArms.map((arm, idx) => (
+        <group key={idx}>
+          <mesh geometry={arm.geometry} castShadow receiveShadow>
+            <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
+          </mesh>
+          {arm.hasFlower && (
+            <mesh position={arm.tip} castShadow>
+              <icosahedronGeometry args={[arm.radius * 0.65, 0]} />
+              <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
+            </mesh>
+          )}
+        </group>
+      ))}
+      <mesh position={data.trunkTip} castShadow>
+        <icosahedronGeometry args={[${params.trunkRadius * 0.75}, 1]} />
+        <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
+      </mesh>`;
+  }
 
   return `/**
- * Procedural Low-Poly Tree (React Three Fiber Component)
- * Generated with Low-Poly Tree and Plant Generator Code Utility
- * Model species: ${params.species.toUpperCase()}
+ * Procedural Low-Poly Tree (React Three Fiber) - Species SPECIFIC Template
+ * Generated for: ${params.species.toUpperCase()}
+ * Foliage geometry model: ${params.foliageType}
  */
 import React, { useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
-// Parallel Transport Sweep Geometry Helper
+// 3D Point Transport Sweeping Pipeline (Trunks and Arms)
 export function createSweepGeometry(points, startRadius, endRadius, radialSegments) {
   const numPoints = points.length;
   if (numPoints < 2) return new THREE.BufferGeometry();
@@ -1398,7 +1729,7 @@ export function ProceduralTree() {
   const treeRef = useRef(null);
   const foliageRef = useRef(null);
 
-  // Gentle wind sway animation
+  // Dynamic wind sway logic
   useFrame((state) => {
     const t = state.clock.getElapsedTime();
     const windStrength = ${params.windStrength};
@@ -1412,7 +1743,6 @@ export function ProceduralTree() {
     }
   });
 
-  // Calculate high-quality custom geometries in useMemo
   const data = useMemo(() => {
     const trunkHeight = ${params.trunkHeight};
     const trunkRadius = ${params.trunkRadius};
@@ -1446,157 +1776,11 @@ export function ProceduralTree() {
       return seed / 4294967296;
     };
 
-    // Calculate secondary branches and foliage
-    const branchesList = [];
-    const hasBranches = ["oak", "pine", "bonsai", "shrub"].includes("${params.species}");
-    if (hasBranches) {
-      const branchCount = "${params.species}" === "oak" ? 3 : "${params.species}" === "bonsai" ? 2 : "${params.species}" === "shrub" ? 3 : "${params.species}" === "pine" ? 4 : 0;
-      for (let b = 0; b < branchCount; b++) {
-        const t = 0.35 + (b / branchCount) * 0.45 + (random() * 0.08);
-        const parentPos = getTrunkPointAt(t);
-        const r_at_t = trunkRadius * (1 - t * trunkTaper);
-        const bRad = r_at_t * 0.45;
+${memoBranchBuilders}
 
-        const angle = (b / branchCount) * Math.PI * 2 + (random() - 0.5) * 0.5;
-        const dirX = Math.cos(angle);
-        const dirZ = Math.sin(angle);
+${memoCactusBuilders}
 
-        const maxBranchLen = trunkHeight * 0.35 * (1 - t * 0.4);
-        const branchLen = maxBranchLen * (0.8 + random() * 0.5);
-
-        const branchPoints = [];
-        const steps = 5;
-        for (let k = 0; k <= steps; k++) {
-          const bp = k / steps;
-          const hDist = bp * branchLen;
-          const vDist = Math.sin(bp * Math.PI * 0.45) * branchLen * 0.45 + Math.pow(bp, 2) * branchLen * 0.15;
-          branchPoints.push(new THREE.Vector3(
-            parentPos.x + hDist * dirX,
-            parentPos.y + vDist,
-            parentPos.z + hDist * dirZ
-          ));
-        }
-
-        const bGeo = createSweepGeometry(branchPoints, bRad, bRad * 0.15, trunkSegments);
-        const branchTip = branchPoints[branchPoints.length - 1];
-        const bFoliageSize = ${params.foliageSize} * (0.4 + random() * 0.4);
-        const bFoliageHeight = ${params.foliageHeight} * (0.4 + random() * 0.4);
-
-        branchesList.push({
-          geometry: bGeo,
-          tip: [branchTip.x, branchTip.y, branchTip.z],
-          foliageSize: bFoliageSize,
-          foliageHeight: bFoliageHeight,
-          seed: random()
-        });
-      }
-    }
-
-    // Cactus specifics
-    const armsList = [];
-    const originalFoliageType = "${params.foliageType}";
-    if (originalFoliageType === "cactus-arms") {
-      const armCount = Math.min(4, ${params.foliageDensity});
-      for (let a = 0; a < armCount; a++) {
-        const t = 0.3 + a * 0.18;
-        const trunkPosAtT = getTrunkPointAt(t);
-        const armHeight = ${params.foliageHeight} * (0.55 + random() * 0.3);
-        const armRadius = trunkRadius * 0.72 * (1 - t * trunkTaper);
-
-        const angle = (a / armCount) * Math.PI * 1.8 + (random() - 0.5) * 0.25;
-        const dirX = Math.cos(angle);
-        const dirZ = Math.sin(angle);
-        const elbowLen = ${params.foliageSize} * 0.38;
-
-        const armPoints = [];
-        armPoints.push(new THREE.Vector3(trunkPosAtT.x, trunkPosAtT.y, trunkPosAtT.z));
-        armPoints.push(new THREE.Vector3(trunkPosAtT.x + dirX * armRadius, trunkPosAtT.y, trunkPosAtT.z + dirZ * armRadius));
-        
-        const shoulderX = trunkPosAtT.x + dirX * (armRadius + elbowLen * 0.85);
-        const shoulderZ = trunkPosAtT.z + dirZ * (armRadius + elbowLen * 0.85);
-        armPoints.push(new THREE.Vector3(shoulderX, trunkPosAtT.y, shoulderZ));
-
-        const elbowX = trunkPosAtT.x + dirX * (armRadius + elbowLen);
-        const elbowZ = trunkPosAtT.z + dirZ * (armRadius + elbowLen);
-        const elbowY = trunkPosAtT.y + armHeight * 0.15;
-        armPoints.push(new THREE.Vector3(elbowX, elbowY, elbowZ));
-
-        const tipY = trunkPosAtT.y + armHeight;
-        armPoints.push(new THREE.Vector3(elbowX, (elbowY + tipY) * 0.5, elbowZ));
-        armPoints.push(new THREE.Vector3(elbowX, tipY, elbowZ));
-
-        const aGeo = createSweepGeometry(armPoints, armRadius, armRadius * 0.82, trunkSegments);
-        armsList.push({
-          geometry: aGeo,
-          tip: [elbowX, tipY + 0.05, elbowZ],
-          radius: armRadius,
-          hasFlower: random() > 0.4
-        });
-      }
-    }
-
-    // Core foliage list for Spherical, tiered cone, palm-fronds, shroom-cap, or Bushy-tufts
-    const foliageClusterList = [];
-    if (originalFoliageType === "spherical") {
-      for (let j = 0; j < ${params.foliageDensity}; j++) {
-        const rad = ${params.foliageSize} * (0.6 + random() * 0.4);
-        const off = j === 0 ? [0,0,0] : [
-          (random() - 0.5) * ${params.foliageSize} * 1.1,
-          (random() - 0.2) * ${params.foliageSize} * 0.8,
-          (random() - 0.5) * ${params.foliageSize} * 1.1
-        ];
-        foliageClusterList.push({ radius: rad, position: off, alt: random() > 0.55 });
-      }
-    } else if (originalFoliageType === "bushy-tufts") {
-      for (let t = 0; t < ${params.foliageDensity} + 3; t++) {
-        const rad = ${params.foliageSize} * (0.5 + random() * 0.55);
-        const off = [
-          (random() - 0.5) * ${params.foliageSize} * 1.6,
-          (random() - 0.5) * ${params.foliageSize} * 0.6,
-          (random() - 0.5) * ${params.foliageSize} * 1.6
-        ];
-        foliageClusterList.push({ radius: rad, position: off });
-      }
-    } else if (originalFoliageType === "tiered-cone") {
-      const tierHeight = ${params.foliageHeight / params.foliageTiers};
-      for (let t = 0; t < ${params.foliageTiers}; t++) {
-        const factor = (${params.foliageTiers} - t) / ${params.foliageTiers};
-        const tierRadius = ${params.foliageSize} * (0.35 + factor * 0.65);
-        const cHeight = tierHeight * 1.4;
-        foliageClusterList.push({
-          radius: tierRadius,
-          height: cHeight,
-          y: (t * (tierHeight * 0.85)) + (cHeight / 2) - 0.3,
-          rotY: t * 0.45,
-          alt: t % 2 !== 0
-        });
-      }
-    } else if (originalFoliageType === "palm-fronds") {
-      const count = ${params.foliageDensity} + 4;
-      for (let f = 0; f < count; f++) {
-        const length = ${params.foliageSize} * (0.8 + random() * 0.3);
-        foliageClusterList.push({
-          rotY: (f / count) * Math.PI * 2,
-          length,
-          alt: f % 2 !== 0
-        });
-      }
-    } else if (originalFoliageType === "shroom-cap") {
-      const spots = [];
-      for (let s = 0; s < ${params.foliageDensity}; s++) {
-        const theta = random() * Math.PI * 2;
-        const phi = random() * Math.PI * 0.35;
-        const rad = ${params.foliageSize} * 0.85;
-        const sx = Math.sin(phi) * Math.cos(theta) * rad;
-        const sz = Math.sin(phi) * Math.sin(theta) * rad;
-        const sy = Math.cos(phi) * ${params.foliageHeight} * 0.75 + 0.1;
-        spots.push({
-          pos: [sx, sy, sz],
-          rot: [phi * Math.sin(theta), theta, phi * Math.cos(theta)]
-        });
-      }
-      foliageClusterList.push({ spots });
-    }
+${subMeshMemoCalc}
 
     return {
       trunkGeo,
@@ -1609,124 +1793,18 @@ export function ProceduralTree() {
 
   return (
     <group ref={treeRef}>
-      {/* 3D TRUNK */}
+      {/* Curved low-poly trunk */}
       <mesh geometry={data.trunkGeo} castShadow receiveShadow>
         <meshStandardMaterial color="${params.trunkColor}" flatShading roughness={0.9} metalness={0.1} />
       </mesh>
 
-      {/* Procedurally generated branches */}
-      {data.branches.map((b, idx) => (
-        <group key={idx}>
-          <mesh geometry={b.geometry} castShadow receiveShadow>
-            <meshStandardMaterial color="${params.trunkColor}" flatShading roughness={0.9} metalness={0.1} />
-          </mesh>
-          <group position={b.tip}>
-            {"${params.foliageType}" === "spherical" && (
-              <>
-                <mesh castShadow receiveShadow>
-                  <icosahedronGeometry args={[b.foliageSize, 1]} />
-                  <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
-                </mesh>
-                <mesh position={[b.foliageSize * 0.15, b.foliageSize * 0.12, -b.foliageSize * 0.1]} castShadow receiveShadow>
-                  <icosahedronGeometry args={[b.foliageSize * 0.8, 1]} />
-                  <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
-                </mesh>
-              </>
-            )}
-            {("${params.foliageType}" === "conic" || "${params.foliageType}" === "tiered-cone") && (
-              <mesh castShadow>
-                <coneGeometry args={[b.foliageSize, b.foliageHeight, ${Math.max(4, radSegs)}]} />
-                <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
-              </mesh>
-            )}
-            {"${params.foliageType}" === "bushy-tufts" && (
-              <mesh castShadow>
-                <dodecahedronGeometry args={[b.foliageSize, 0]} />
-                <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
-              </mesh>
-            )}
-          </group>
-        </group>
-      ))}
+${branchesJsx}
 
-      {/* Procedurally generated cactus arms */}
-      {data.cactusArms.map((arm, idx) => (
-        <group key={idx}>
-          <mesh geometry={arm.geometry} castShadow receiveShadow>
-            <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
-          </mesh>
-          {arm.hasFlower && (
-            <mesh position={arm.tip} castShadow>
-              <icosahedronGeometry args={[arm.radius * 0.65, 0]} />
-              <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
-            </mesh>
-          )}
-        </group>
-      ))}
-      {"${params.foliageType}" === "cactus-arms" && (
-        <mesh position={data.trunkTip} castShadow>
-          <icosahedronGeometry args={[${params.trunkRadius * 0.75}, 1]} />
-          <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
-        </mesh>
-      )}
+${cactusJsx}
 
       {/* Main leaf crown */}
       <group ref={foliageRef} position={data.trunkTip}>
-        {"${params.foliageType}" === "spherical" && data.foliage.map((f, idx) => (
-          <mesh key={idx} position={f.position} castShadow receiveShadow>
-            <icosahedronGeometry args={[f.radius, 1]} />
-            <meshStandardMaterial color={f.alt ? "${params.foliageColorAlternate}" : "${params.foliageColor}"} flatShading roughness={0.85} />
-          </mesh>
-        ))}
-
-        {"${params.foliageType}" === "conic" && (
-          <mesh position={[0, ${params.foliageHeight / 2 - 0.2}, 0]} castShadow receiveShadow>
-            <coneGeometry args={[${params.foliageSize}, ${params.foliageHeight}, ${Math.max(4, radSegs)}]} />
-            <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
-          </mesh>
-        )}
-
-        {"${params.foliageType}" === "tiered-cone" && data.foliage.map((f, idx) => (
-          <mesh key={idx} position={[0, f.y, 0]} rotation={[0, f.rotY, 0]} castShadow receiveShadow>
-            <coneGeometry args={[f.radius, f.height, ${Math.max(4, radSegs)}]} />
-            <meshStandardMaterial color={f.alt ? "${params.foliageColorAlternate}" : "${params.foliageColor}"} flatShading roughness={0.85} />
-          </mesh>
-        ))}
-
-        {"${params.foliageType}" === "palm-fronds" && data.foliage.map((f, idx) => (
-          <group key={idx} rotation={[0.25, f.rotY, 0]}>
-            <mesh position={[0, 0.1, f.length * 0.5]} rotation={[-0.2, 0, 0]} castShadow>
-              <boxGeometry args={[0.3, 0.03, f.length]} />
-              <meshStandardMaterial color={f.alt ? "${params.foliageColorAlternate}" : "${params.foliageColor}"} flatShading roughness={0.85} />
-            </mesh>
-          </group>
-        ))}
-
-        {"${params.foliageType}" === "shroom-cap" && (
-          <>
-            <mesh position={[0, ${params.foliageHeight / 2}, 0]} castShadow receiveShadow>
-              <cylinderGeometry args={[${params.foliageSize * 0.1}, ${params.foliageSize}, ${params.foliageHeight}, ${radSegs * 2}]} />
-              <meshStandardMaterial color="${params.foliageColor}" flatShading roughness={0.85} />
-            </mesh>
-            <mesh position={[0, 0.05, 0]}>
-              <cylinderGeometry args={[${params.foliageSize * 1.01}, ${params.foliageSize * 0.6}, 0.1, ${radSegs * 2}]} />
-              <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
-            </mesh>
-            {data.foliage[0]?.spots?.map((s, idx) => (
-              <mesh key={idx} position={s.pos} rotation={s.rot}>
-                <boxGeometry args={[0.12, 0.08, 0.12]} />
-                <meshStandardMaterial color="${params.foliageColorAlternate}" flatShading roughness={0.85} />
-              </mesh>
-            ))}
-          </>
-        )}
-
-        {"${params.foliageType}" === "bushy-tufts" && data.foliage.map((f, idx) => (
-          <mesh key={idx} position={f.position} castShadow receiveShadow>
-            <dodecahedronGeometry args={[f.radius, 0]} />
-            <meshStandardMaterial color={idx % 2 === 0 ? "${params.foliageColor}" : "${params.foliageColorAlternate}"} flatShading roughness={0.85} />
-          </mesh>
-        ))}
+${jsxMeshRender}
       </group>
     </group>
   );
