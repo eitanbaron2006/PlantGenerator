@@ -232,6 +232,7 @@ export default function Home() {
   const [viewportBg, setViewportBg] = useState<string>("#e9e9e0"); // Natural Tones Light Olive/Sand
   const [ambientLightIntensity, setAmbientLightIntensity] = useState<number>(0.58);
   const [sunLightRotation, setSunLightRotation] = useState<number>(0);
+  const [showEcosystemWorld, setShowEcosystemWorld] = useState<boolean>(true);
 
   // AI Prompt panel state
   const [aiPrompt, setAiPrompt] = useState<string>("");
@@ -822,6 +823,7 @@ export default function Home() {
                   activeUploadedId={activeUploadedId}
                   ambientLightIntensity={ambientLightIntensity}
                   sunLightRotation={sunLightRotation}
+                  showEcosystemWorld={showEcosystemWorld}
                 />
               </div>
             </div>
@@ -1145,6 +1147,20 @@ export default function Home() {
                     value={sunLightRotation}
                     onChange={(e) => setSunLightRotation(parseInt(e.target.value))}
                     className="w-full accent-[#5A5A40] bg-[#e9e9e0] h-1 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
+                {/* Immersive Ecosystem World (Water & Sky) Toggle */}
+                <div className="flex items-center justify-between pt-2 border-t border-[#ecece4] text-xs">
+                  <div className="flex flex-col text-right">
+                    <span className="font-bold text-[10.5px] text-[#44443a]">סביבת עולם מלאה (ים ושמיים)</span>
+                    <span className="text-[9px] text-[#8e8e7e]">הוספת אוקיינוס גלי ועננים זזים ברוח</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={showEcosystemWorld}
+                    onChange={(e) => setShowEcosystemWorld(e.target.checked)}
+                    className="w-4 h-4 rounded-md border-[#e2e2d8] text-[#5A5A40] focus:ring-[#5A5A40] accent-[#5A5A40] cursor-pointer"
                   />
                 </div>
               </div>

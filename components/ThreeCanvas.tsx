@@ -25,6 +25,7 @@ interface ThreeCanvasProps {
   activeUploadedId: string | null;
   ambientLightIntensity?: number;
   sunLightRotation?: number;
+  showEcosystemWorld?: boolean;
 }
 
 // Fixed scatter slots for deterministic forest layout to avoid jumping trees on slider drag
@@ -63,6 +64,7 @@ export default function ThreeCanvas({
   activeUploadedId = null,
   ambientLightIntensity = 0.58,
   sunLightRotation = 0,
+  showEcosystemWorld = false,
 }: ThreeCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -85,11 +87,32 @@ export default function ThreeCanvas({
   const forestIslandRef = useRef<THREE.Mesh | null>(null);
   const comparisonPedestalRef = useRef<THREE.Mesh | null>(null);
 
+  // Immersive world
+  const seaRef = useRef<THREE.Mesh | null>(null);
+  const foamRef = useRef<THREE.Mesh | null>(null);
+  const cloudsGroupRef = useRef<THREE.Group | null>(null);
+
   // Helpers
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
   const axesHelperRef = useRef<THREE.AxesHelper | null>(null);
 
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  // Sync props to refs to avoid stale closures in initial render loop
+  const showEcosystemWorldRef = useRef(showEcosystemWorld);
+  useEffect(() => {
+    showEcosystemWorldRef.current = showEcosystemWorld;
+  }, [showEcosystemWorld]);
+
+  const windEnabledRef = useRef(windEnabled);
+  useEffect(() => {
+    windEnabledRef.current = windEnabled;
+  }, [windEnabled]);
+
+  const windStrengthRef = useRef(params.windStrength);
+  useEffect(() => {
+    windStrengthRef.current = params.windStrength;
+  }, [params.windStrength]);
 
   // Initialize Scene, Camera, Lights & Renderer
   useEffect(() => {
@@ -159,6 +182,77 @@ export default function ThreeCanvas({
       fillLight.position.set(-6, 4, -6);
       scene.add(fillLight);
 
+      // 5b. IMMERSIVE ENVIRONMENT: LOW-POLY SEA AND PUFFY ORBITING CLOUDS
+      const seaGeo = new THREE.PlaneGeometry(220, 220, 24, 24);
+      seaGeo.rotateX(-Math.PI / 2);
+      const seaMat = new THREE.MeshStandardMaterial({
+        color: 0x00acc1, // majestic turquoise tropical deep ocean
+        flatShading: true,
+        roughness: 0.12,
+        metalness: 0.15,
+        transparent: true,
+        opacity: 0.85,
+      });
+      const sea = new THREE.Mesh(seaGeo, seaMat);
+      sea.position.y = -1.25;
+      scene.add(sea);
+      seaRef.current = sea;
+
+      // Realistic shore-lapping foam effect on the beaches of the island
+      const foamGeo = new THREE.RingGeometry(11.2, 12.8, 48);
+      foamGeo.rotateX(-Math.PI / 2);
+      const foamMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+        depthWrite: false, // Prevents Z-fighting or clipping with transparent water
+      });
+      const foam = new THREE.Mesh(foamGeo, foamMat);
+      foam.position.set(0, -1.22, 0); // Sits gently on the beach waterline
+      scene.add(foam);
+      foamRef.current = foam;
+
+      const cloudsGroup = new THREE.Group();
+      const cloudMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        flatShading: true,
+        roughness: 0.95,
+      });
+      for (let c = 0; c < 6; c++) {
+        const cloud = new THREE.Group();
+        const numSpheres = 3 + Math.floor(Math.random() * 3);
+        for (let s = 0; s < numSpheres; s++) {
+          const geo = new THREE.DodecahedronGeometry(0.8 + Math.random() * 0.8, 1);
+          const mesh = new THREE.Mesh(geo, cloudMat);
+          mesh.position.set(
+            (s - numSpheres / 2) * 1.1 + (Math.random() - 0.5) * 0.5,
+            (Math.random() - 0.5) * 0.3,
+            (Math.random() - 0.5) * 0.5
+          );
+          mesh.scale.set(1.0, 0.7 + Math.random() * 0.4, 0.9 + Math.random() * 0.3);
+          cloud.add(mesh);
+        }
+        
+        // Arrange clouds beautifully around the viewport focus
+        const angle = (c / 6) * Math.PI * 2 + Math.random() * 0.5;
+        const dist = 16 + Math.random() * 12;
+        cloud.position.set(
+          Math.cos(angle) * dist,
+          5.5 + Math.random() * 4.5,
+          Math.sin(angle) * dist
+        );
+        
+        // Store metadata directly in the cloud group object
+        (cloud as any).speed = 0.05 + Math.random() * 0.08;
+        (cloud as any).originDist = dist;
+        (cloud as any).orbitAngle = angle;
+        
+        cloudsGroup.add(cloud);
+      }
+      scene.add(cloudsGroup);
+      cloudsGroupRef.current = cloudsGroup;
+
       // 6. SINGLE VIEW Pedestal
       const singlePedestalGeo = new THREE.CylinderGeometry(2.8, 2.9, 0.2, 32);
       const singlePedestalMat = new THREE.MeshStandardMaterial({
@@ -202,6 +296,63 @@ export default function ThreeCanvas({
       const soil = new THREE.Mesh(soilGeo, soilMat);
       soil.position.y = -0.35;
       forestIsland.add(soil);
+
+      // A beautiful wide sloping sandy beach foundation that rolls down into the water
+      const beachGeo = new THREE.CylinderGeometry(11.0, 12.8, 1.25, 32);
+      const beachMat = new THREE.MeshStandardMaterial({
+        color: 0xeedcb3, // gorgeous golden-cream sand
+        flatShading: true,
+        roughness: 0.95,
+      });
+      const beach = new THREE.Mesh(beachGeo, beachMat);
+      beach.position.y = -0.65; // Slipped lower under the grass disk
+      beach.receiveShadow = true;
+      beach.castShadow = true;
+      forestIsland.add(beach);
+
+      // Add soft rolling green hills on the boundaries of the grass island to give organic depth
+      const hillGeo = new THREE.DodecahedronGeometry(1.8, 1);
+      const hillMat = new THREE.MeshStandardMaterial({
+        color: 0x689f38, // slightly darker grassy forest shade
+        flatShading: true,
+        roughness: 0.95,
+      });
+      const hillPositions = [
+        { x: -5.5, z: -5.5, sx: 1.4, sy: 0.45, sz: 1.2 },
+        { x: 5.8, z: 5.8, sx: 1.5, sy: 0.5, sz: 1.5 },
+        { x: -6.5, z: 4.2, sx: 1.2, sy: 0.35, sz: 1.2 },
+        { x: 6.8, z: -4.5, sx: 1.3, sy: 0.4, sz: 1.3 }
+      ];
+      hillPositions.forEach((hp) => {
+        const hill = new THREE.Mesh(hillGeo, hillMat);
+        hill.position.set(hp.x, -0.05, hp.z);
+        hill.scale.set(hp.sx, hp.sy, hp.sz);
+        hill.castShadow = true;
+        hill.receiveShadow = true;
+        forestIsland.add(hill);
+      });
+
+      // Add prominent low-poly coastal boulders touching and weathering the waves
+      const boulderGeo = new THREE.DodecahedronGeometry(0.8, 0);
+      const boulderMat = new THREE.MeshStandardMaterial({
+        color: 0x78909c, // rugged slate grey weathering rocks
+        flatShading: true,
+        roughness: 0.9,
+      });
+      const boulderSpecs = [
+        { x: -10.0, y: -0.75, z: 2.2, s: [1.4, 0.9, 1.3] },
+        { x: 8.8, y: -0.85, z: -4.8, s: [1.3, 1.1, 0.9] },
+        { x: 2.5, y: -0.9, z: 9.8, s: [1.1, 1.3, 1.2] },
+        { x: -7.5, y: -0.8, z: -8.0, s: [1.4, 1.0, 1.1] }
+      ];
+      boulderSpecs.forEach((bs) => {
+        const boulder = new THREE.Mesh(boulderGeo, boulderMat);
+        boulder.position.set(bs.x, bs.y, bs.z);
+        boulder.scale.set(bs.s[0], bs.s[1], bs.s[2]);
+        boulder.castShadow = true;
+        boulder.receiveShadow = true;
+        forestIsland.add(boulder);
+      });
 
       // Add some tiny stones to the forest island to make it look gorgeous
       const stoneGeo = new THREE.DodecahedronGeometry(0.24, 0);
@@ -302,6 +453,61 @@ export default function ThreeCanvas({
           controlsRef.current.update();
         }
 
+        // Immersive world updates
+        const isWorld = showEcosystemWorldRef.current;
+        if (seaRef.current) {
+          if (isWorld) {
+            seaRef.current.visible = true;
+            const pos = seaRef.current.geometry.attributes.position;
+            const time = elapsed * 1.1; // Slightly swifter wave frequencies
+            
+            // Build magnificent layered multi-sinusoidal waves
+            for (let i = 0; i < pos.count; i++) {
+              const x = pos.getX(i);
+              const z = pos.getZ(i);
+              const wave1 = Math.sin(x * 0.08 + time) * 0.28;
+              const wave2 = Math.cos(z * 0.08 + time * 0.95) * 0.28;
+              const wave3 = Math.sin((x + z) * 0.04 + time * 0.7) * 0.16;
+              pos.setY(i, wave1 + wave2 + wave3);
+            }
+            pos.needsUpdate = true;
+            seaRef.current.geometry.computeVertexNormals();
+          } else {
+            seaRef.current.visible = false;
+          }
+        }
+
+        if (foamRef.current) {
+          if (isWorld) {
+            foamRef.current.visible = true;
+            // Breathes: expand and contract water contour to simulate tide motion matching the wave phase
+            const pulse = 1.0 + Math.sin(elapsed * 1.6) * 0.045;
+            foamRef.current.scale.set(pulse, 1.0, pulse);
+            // Slowly fade the foam in and out relative to the beach expansion factor
+            const foamMat = foamRef.current.material as THREE.MeshBasicMaterial;
+            if (foamMat) {
+              foamMat.opacity = 0.55 + Math.cos(elapsed * 1.6) * 0.25;
+            }
+          } else {
+            foamRef.current.visible = false;
+          }
+        }
+
+        if (cloudsGroupRef.current) {
+          if (isWorld) {
+            cloudsGroupRef.current.visible = true;
+            cloudsGroupRef.current.children.forEach((cloudChild) => {
+              const cloud = cloudChild as any;
+              const speedMult = windEnabledRef.current ? Math.max(0.4, windStrengthRef.current * 0.6) : 0.5;
+              cloud.orbitAngle += (cloud.speed * 0.003) * speedMult;
+              cloud.position.x = Math.cos(cloud.orbitAngle) * cloud.originDist;
+              cloud.position.z = Math.sin(cloud.orbitAngle) * cloud.originDist;
+            });
+          } else {
+            cloudsGroupRef.current.visible = false;
+          }
+        }
+
         if (rendererRef.current && sceneRef.current && cameraRef.current) {
           rendererRef.current.render(sceneRef.current, cameraRef.current);
         }
@@ -335,12 +541,16 @@ export default function ThreeCanvas({
     }
   }, []);
 
-  // Update background when configured color is changed
+  // Update background when configured color is changed or ecosystem is toggled
   useEffect(() => {
     if (sceneRef.current) {
-      sceneRef.current.background = new THREE.Color(backgroundColor);
+      if (showEcosystemWorld) {
+        sceneRef.current.background = new THREE.Color(0xb2ebf2); // Elegant light tropical sky-blue
+      } else {
+        sceneRef.current.background = new THREE.Color(backgroundColor);
+      }
     }
-  }, [backgroundColor]);
+  }, [backgroundColor, showEcosystemWorld]);
 
   // Dynamically update light settings when changed by environment sliders
   useEffect(() => {
@@ -364,13 +574,13 @@ export default function ThreeCanvas({
   useEffect(() => {
     const isSingle = viewMode === "single";
     if (gridHelperRef.current) {
-      // Toggle grid completely off in Forest mode for cinematic experience
-      gridHelperRef.current.visible = showGrid && isSingle;
+      // Toggle grid completely off in Forest mode or when immersive ecosystem world is showing
+      gridHelperRef.current.visible = showGrid && isSingle && !showEcosystemWorld;
     }
     if (axesHelperRef.current) {
-      axesHelperRef.current.visible = showAxes && isSingle;
+      axesHelperRef.current.visible = showAxes && isSingle && !showEcosystemWorld;
     }
-  }, [showGrid, showAxes, viewMode]);
+  }, [showGrid, showAxes, viewMode, showEcosystemWorld]);
 
   // Update Model mesh when params / viewMode / uploadedModels changes
   useEffect(() => {
@@ -411,11 +621,12 @@ export default function ThreeCanvas({
 
     // Toggle ground elements based on mode
     const isForest = viewMode === "forest";
+    const isWorld = showEcosystemWorld;
     if (singlePedestalRef.current) {
-      singlePedestalRef.current.visible = !isForest;
+      singlePedestalRef.current.visible = !isForest && !isWorld;
     }
     if (forestIslandRef.current) {
-      forestIslandRef.current.visible = isForest;
+      forestIslandRef.current.visible = isForest || isWorld;
     }
 
     // Has custom files?
@@ -423,8 +634,8 @@ export default function ThreeCanvas({
     const activeUpload = uploadedModels.find(m => m.id === activeUploadedId) || uploadedModels[0] || null;
 
     if (comparisonPedestalRef.current) {
-      // Pedestal only shows in single view mode when an active uploaded model is available
-      comparisonPedestalRef.current.visible = !isForest && hasUploaded && activeUpload !== null;
+      // Pedestal only shows in single view mode when an active uploaded model is available and ecosystem world is disabled
+      comparisonPedestalRef.current.visible = !isForest && hasUploaded && activeUpload !== null && !isWorld;
     }
 
     // ------------------ SCENE MODE 1: SINGLE SPECIMEN SCULPTOR ------------------
@@ -580,7 +791,7 @@ export default function ThreeCanvas({
       });
     }
 
-  }, [params, viewMode, uploadedModels, activeUploadedId]);
+  }, [params, viewMode, uploadedModels, activeUploadedId, showEcosystemWorld]);
 
   return (
     <div
