@@ -2,7 +2,11 @@
 
 import React, { useState } from "react";
 import { TreeParams, SPECIES_PRESETS, getThreeJsCode, getReactThreeFiberCode } from "../lib/treeGenerator";
-import ThreeCanvas from "../components/ThreeCanvas";
+import { exportToGLB, exportToOBJ } from "../lib/modelExporter";
+import ThreeCanvas, { UploadedModel } from "../components/ThreeCanvas";
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { 
   Trees, 
   Sparkles, 
@@ -13,6 +17,7 @@ import {
   RefreshCw, 
   Grid2X2, 
   Wind, 
+  Sun,
   HelpCircle,
   Eye,
   Info,
@@ -20,7 +25,15 @@ import {
   Shuffle,
   FileCode,
   FileJson,
-  X
+  X,
+  Box,
+  Download,
+  Layers,
+  Printer,
+  Upload,
+  Trash2,
+  TreePine,
+  CloudLightning
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -201,6 +214,14 @@ export default function Home() {
   const [params, setParams] = useState<TreeParams>(SPECIES_PRESETS.oak);
   const [activePreset, setActivePreset] = useState<string>("oak");
 
+  // Custom Uploads and Forest states
+  const [uploadedModels, setUploadedModels] = useState<UploadedModel[]>([]);
+  const [activeUploadedId, setActiveUploadedId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"single" | "forest">("single");
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+
   // Cycler track state for RANDOM presets
   const [randomTrackIndex, setRandomTrackIndex] = useState<number>(0);
 
@@ -209,6 +230,8 @@ export default function Home() {
   const [showGrid, setShowGrid] = useState<boolean>(true);
   const [showAxes, setShowAxes] = useState<boolean>(false);
   const [viewportBg, setViewportBg] = useState<string>("#e9e9e0"); // Natural Tones Light Olive/Sand
+  const [ambientLightIntensity, setAmbientLightIntensity] = useState<number>(0.58);
+  const [sunLightRotation, setSunLightRotation] = useState<number>(0);
 
   // AI Prompt panel state
   const [aiPrompt, setAiPrompt] = useState<string>("");
@@ -218,10 +241,162 @@ export default function Home() {
     "A majestic Quercus oak tree, representing durable core strength with balanced lush polygonal crown layers."
   );
 
+  // File Uploader parsing handler
+  const handleFileUpload = (file: File) => {
+    setUploadError(null);
+    setUploadSuccess(null);
+    
+    if (!file) return;
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    
+    if (extension === "json") {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const jsonText = e.target?.result as string;
+          const parsed = JSON.parse(jsonText);
+          
+          if (parsed && typeof parsed === "object" && "species" in parsed && "trunkHeight" in parsed) {
+            setParams(parsed as TreeParams);
+            setActivePreset(`📥 ${file.name}`);
+            setUploadSuccess(`הפרמטרים נטענו בהצלחה מקובץ: ${file.name}`);
+            setAiDescription(`סדרת פרמטרים שנטענה מקובץ ה-JSON הפרוצדורלי: ${file.name}`);
+          } else {
+            setUploadError("מבנה קובץ ה-JSON אינו תואם לפרמטרי צמח תקינים.");
+          }
+        } catch (err) {
+          console.error(err);
+          setUploadError("שגיאה בפענוח קובץ ה-JSON.");
+        }
+      };
+      reader.readAsText(file);
+    } 
+    else if (extension === "glb") {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const arrayBuffer = e.target?.result as ArrayBuffer;
+          const loader = new GLTFLoader();
+          
+          loader.parse(
+            arrayBuffer, 
+            "", 
+            (gltf) => {
+              let vertices = 0;
+              gltf.scene.traverse((child) => {
+                if (child instanceof THREE.Mesh && child.geometry) {
+                  const position = child.geometry.attributes.position;
+                  if (position) vertices += position.count;
+                }
+              });
+
+              const id = `upload-${Date.now()}`;
+              const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+              
+              const newModel: UploadedModel = {
+                id,
+                name: file.name,
+                object: gltf.scene,
+                type: "glb",
+                fileSize: `${sizeMB} MB`,
+                verticesCount: vertices,
+              };
+
+              setUploadedModels(prev => [...prev, newModel]);
+              setActiveUploadedId(id);
+              setUploadSuccess(`מודל GLB נטען בהצלחה! המודל נוסף לעמוד ובנוסף הופץ ביער המדגם.`);
+            },
+            (error) => {
+              console.error(error);
+              setUploadError("שגיאה בפענוח קובץ ה-GLB התלת-מימדי.");
+            }
+          );
+        } catch (err) {
+          console.error(err);
+          setUploadError("שגיאה בלחיצת נתוני ה-GLB.");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } 
+    else if (extension === "obj") {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const objText = e.target?.result as string;
+          const loader = new OBJLoader();
+          const objNode = loader.parse(objText);
+          
+          let vertices = 0;
+          objNode.traverse((child) => {
+            if (child instanceof THREE.Mesh && child.geometry) {
+              const position = child.geometry.attributes.position;
+              if (position) vertices += position.count;
+            }
+          });
+
+          const id = `upload-${Date.now()}`;
+          const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          
+          const newModel: UploadedModel = {
+            id,
+            name: file.name,
+            object: objNode,
+            type: "obj",
+            fileSize: `${sizeMB} MB`,
+            verticesCount: vertices,
+          };
+
+          setUploadedModels(prev => [...prev, newModel]);
+          setActiveUploadedId(id);
+          setUploadSuccess(`מודל OBJ נטען בהצלחה! המודל נוסף לעמוד ובנוסף הופץ ביער המדגם.`);
+        } catch (err) {
+          console.error(err);
+          setUploadError("שגיאה בפענוח קובץ ה-OBJ הטקסטואלי.");
+        }
+      };
+      reader.readAsText(file);
+    } 
+    else {
+      setUploadError("פורמט קובץ לא נתמך. אנא העלה קובץ סיומת .json, .glb, או .obj.");
+    }
+  };
+
+  const deleteUploadedModel = (id: string) => {
+    setUploadedModels(prev => prev.filter(m => m.id !== id));
+    if (activeUploadedId === id) {
+      setActiveUploadedId(null);
+    }
+  };
+
   // Exporter code state & Code Dialog visibility
-  const [exporterTab, setExporterTab] = useState<"vanilla" | "r3f">("vanilla");
+  const [exporterTab, setExporterTab] = useState<"vanilla" | "r3f" | "3d">("vanilla");
   const [copied, setCopied] = useState<boolean>(false);
   const [showCodeModal, setShowCodeModal] = useState<boolean>(false);
+  const [showUploadModal, setShowUploadModal] = useState<boolean>(false);
+  const [glbExporting, setGlbExporting] = useState<boolean>(false);
+
+  const handleExportGLB = async () => {
+    setGlbExporting(true);
+    try {
+      const fileName = `${params.species}-plant-model.glb`;
+      await exportToGLB(params, fileName);
+    } catch (err) {
+      console.error(err);
+      alert("שגיאה במהלך ייצוא קובץ ה-3D GLB. אנא נסה שוב.");
+    } finally {
+      setGlbExporting(false);
+    }
+  };
+
+  const handleExportOBJ = () => {
+    try {
+      const fileName = `${params.species}-plant-model.obj`;
+      exportToOBJ(params, fileName);
+    } catch (err) {
+      console.error(err);
+      alert("שגיאה במהלך ייצוא קובץ ה-OBJ. אנא נסה שוב.");
+    }
+  };
 
   // Handling presets selection
   const selectPreset = (key: string) => {
@@ -455,6 +630,15 @@ export default function Home() {
               <Code className="w-3.5 h-3.5 text-white" />
               <span>Export Source Code</span>
             </button>
+
+            {/* NEW UPLOAD & FOREST SANDBOX DIALOG TRIGGER BUTTON */}
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="bg-white hover:bg-[#fafaf6] text-[#5A5A40] border border-[#e2e2d8] hover:border-[#5A5A40]/40 px-3.5 py-2 rounded-xl font-bold text-xs transition-all active:scale-95 cursor-pointer flex items-center gap-1.5 shadow-sm shrink-0"
+            >
+              <Upload className="w-3.5 h-3.5 text-[#5A5A40]" />
+              <span>יער והעלאת קבצים</span>
+            </button>
           </div>
         </header>
 
@@ -575,28 +759,71 @@ export default function Home() {
 
           </div>
 
-          {/* CENTER DISPLAY STAGE: Hero 3D Viewport ONLY (Span 6 of 12) - Layout Fit Optimized */}
-          <div className="lg:col-span-6 flex flex-col h-full min-h-0">
+          {/* CENTER DISPLAY STAGE: Dynamic 3D Viewport & Interactive Model Nursery */}
+          <div className="lg:col-span-6 flex flex-col gap-4 h-full min-h-0">
             
-            {/* 3D Viewport Section (Dynamic Centered Viewport) */}
-            <div className="bg-white border border-[#e2e2d8] rounded-2xl p-2 shadow-xs relative flex flex-col h-full min-h-0 flex-1">
-              <div className="absolute top-4 left-4 z-10 pointer-events-none select-none bg-[#2c2c24]/90 border border-white/10 text-white rounded-lg px-2.5 py-1 text-[9px] font-mono flex items-center gap-1.5 shadow-sm">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 block shrink-0 animate-pulse" />
-                <span>OPENGL CORE VIEWPORT (DRAG TO ROTATE)</span>
+            {/* 3D Viewport Section with Integrated Environment Toggle */}
+            <div className="bg-white border border-[#e2e2d8] rounded-2xl p-3 shadow-xs relative flex flex-col h-full min-h-0 flex-1">
+              {/* Header bar within the Viewport Box */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 mb-2.5 border-b border-[#e2e2d8]">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-[#2c2c24]">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+                  <span className="font-mono">OPENGL CORE VIEWPORT</span>
+                  <span className="text-[10px] bg-[#5A5A40]/10 border border-[#5A5A40]/15 text-[#5A5A40] rounded-lg px-2 py-0.5 font-bold">
+                    {viewMode === "single" 
+                      ? "🔬 דגם בבודד (Specimen)" 
+                      : "🌲 יער פרוצדורלי (16 עצים)"
+                    }
+                  </span>
+                  {uploadedModels.length > 0 && (
+                    <span className="text-[10px] bg-emerald-600/10 border border-emerald-500/15 text-emerald-800 rounded-lg px-2 py-0.5 font-bold">
+                      📤 נטענו {uploadedModels.length} מוגדרים
+                    </span>
+                  )}
+                </div>
+
+                {/* Hebrew Mode Switcher Tab Group */}
+                <div className="flex bg-[#fafaf6] border border-[#e2e2d8] rounded-xl p-0.5 self-start sm:self-auto text-[11px] font-semibold">
+                  <button
+                    onClick={() => setViewMode("single")}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                      viewMode === "single"
+                        ? "bg-[#5A5A40] text-white shadow-xs"
+                        : "text-[#8e8e7e] hover:text-[#2c2c24]"
+                    }`}
+                  >
+                    <Box className="w-3.5 h-3.5" />
+                    <span>דגם בבודד (Specimen)</span>
+                  </button>
+                  <button
+                    onClick={() => setViewMode("forest")}
+                    className={`flex items-center gap-1.5 px-3 py-1 rounded-lg transition-all cursor-pointer ${
+                      viewMode === "forest"
+                        ? "bg-[#5A5A40] text-white shadow-xs"
+                        : "text-[#8e8e7e] hover:text-[#2c2c24]"
+                    }`}
+                  >
+                    <Trees className="w-3.5 h-3.5" />
+                    <span>יער פרוצדורלי (Forest)</span>
+                  </button>
+                </div>
               </div>
 
               {/* Custom canvas element wrapper - Expanded to occupy all remaining vertical space */}
-              <div className="w-full flex-1 min-h-0 h-full relative rounded-xl overflow-hidden bg-[#e9e9e0]">
+              <div className="w-full flex-1 min-h-[360px] md:min-h-[440px] relative rounded-xl overflow-hidden bg-[#e9e9e0]">
                 <ThreeCanvas 
                   params={params} 
                   windEnabled={windEnabled} 
                   showGrid={showGrid}
                   showAxes={showAxes}
                   backgroundColor={viewportBg}
+                  viewMode={viewMode}
+                  uploadedModels={uploadedModels}
+                  activeUploadedId={activeUploadedId}
+                  ambientLightIntensity={ambientLightIntensity}
+                  sunLightRotation={sunLightRotation}
                 />
               </div>
-
-
             </div>
           </div>
 
@@ -880,6 +1107,48 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* 4. Environment Light Controls */}
+              <div className="flex flex-col gap-3 pt-2 border-t border-[#ecece4]">
+                <div className="flex items-center gap-1 text-[10px] font-bold uppercase text-[#5A5A40] tracking-wider">
+                  <Sun className="w-3.5 h-3.5" />
+                  <span>Environment Lighting</span>
+                </div>
+
+                {/* Ambient Light Intensity */}
+                <div className="flex flex-col gap-1 text-xs">
+                  <div className="flex justify-between items-center text-[#44443a]">
+                    <span className="font-semibold text-[10.5px]">Ambient Intensity ({ambientLightIntensity.toFixed(2)})</span>
+                    <span className="text-[8px] font-mono text-[#a8a896]">0.1 - 2.0</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="2.0"
+                    step="0.05"
+                    value={ambientLightIntensity}
+                    onChange={(e) => setAmbientLightIntensity(parseFloat(e.target.value))}
+                    className="w-full accent-[#5A5A40] bg-[#e9e9e0] h-1 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+
+                {/* Directional Sun Light Rotation */}
+                <div className="flex flex-col gap-1 text-xs">
+                  <div className="flex justify-between items-center text-[#44443a]">
+                    <span className="font-semibold text-[10.5px]">Sun Light Rotation ({sunLightRotation}°)</span>
+                    <span className="text-[8px] font-mono text-[#a8a896]">0° - 360°</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="360"
+                    step="5"
+                    value={sunLightRotation}
+                    onChange={(e) => setSunLightRotation(parseInt(e.target.value))}
+                    className="w-full accent-[#5A5A40] bg-[#e9e9e0] h-1 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -961,61 +1230,193 @@ export default function Home() {
                   >
                     React Three Fiber Code
                   </button>
-                </div>
-
-                {/* Exporter actions bar within the modal */}
-                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                  {/* Copy Code */}
                   <button
-                    onClick={copyCodeToClipboard}
-                    className="flex-1 sm:flex-initial py-2 px-3.5 bg-[#5A5A40] hover:bg-[#4a4a34] text-white rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer font-semibold text-xs active:scale-[0.98] shadow-xs"
+                    onClick={() => setExporterTab("3d")}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      exporterTab === "3d"
+                        ? "bg-[#5A5A40] text-white shadow-xs"
+                        : "text-[#8e8e7e] hover:text-[#2c2c24]"
+                    }`}
                   >
-                    {copied ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
-                        <span className="text-emerald-300">Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5 text-white/90" />
-                        <span>Copy Code</span>
-                      </>
-                    )}
-                  </button>
-
-                  {/* Download Code File */}
-                  <button
-                    onClick={downloadSourceCode}
-                    className="flex-1 sm:flex-initial py-2 px-3.5 bg-[#44443a] hover:bg-[#2c2c24] text-white rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer font-semibold text-xs active:scale-[0.98] shadow-xs"
-                  >
-                    <FileCode className="w-3.5 h-3.5 text-white/90" />
-                    <span>Download File</span>
-                  </button>
-
-                  {/* Download JSON Parameters */}
-                  <button
-                    onClick={downloadJsonParams}
-                    className="flex-1 sm:flex-initial py-2 px-3.5 bg-white hover:bg-neutral-50 text-[#44443a] border border-[#e2e2d8] rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer font-semibold text-xs active:scale-[0.98] shadow-xs"
-                  >
-                    <FileJson className="w-3.5 h-3.5 text-[#5A5A40]" />
-                    <span>JSON Params</span>
+                    📦 Export 3D Model (GLB/OBJ)
                   </button>
                 </div>
+
+                {/* Exporter actions bar within the modal - visible only for code tabs */}
+                {exporterTab !== "3d" ? (
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    {/* Copy Code */}
+                    <button
+                      onClick={copyCodeToClipboard}
+                      className="flex-1 sm:flex-initial py-2 px-3.5 bg-[#5A5A40] hover:bg-[#4a4a34] text-white rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer font-semibold text-xs active:scale-[0.98] shadow-xs"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
+                          <span className="text-emerald-300">Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-white/90" />
+                          <span>Copy Code</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* Download Code File */}
+                    <button
+                      onClick={downloadSourceCode}
+                      className="flex-1 sm:flex-initial py-2 px-3.5 bg-[#44443a] hover:bg-[#2c2c24] text-white rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer font-semibold text-xs active:scale-[0.98] shadow-xs"
+                    >
+                      <FileCode className="w-3.5 h-3.5 text-white/90" />
+                      <span>Download File</span>
+                    </button>
+
+                    {/* Download JSON Parameters */}
+                    <button
+                      onClick={downloadJsonParams}
+                      className="flex-1 sm:flex-initial py-2 px-3.5 bg-white hover:bg-neutral-50 text-[#44443a] border border-[#e2e2d8] rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer font-semibold text-xs active:scale-[0.98] shadow-xs"
+                    >
+                      <FileJson className="w-3.5 h-3.5 text-[#5A5A40]" />
+                      <span>JSON Params</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-[11px] text-[#8e8e7e] font-medium hidden sm:block">
+                    ⚡ 3D Engine Ready
+                  </div>
+                )}
               </div>
 
-              {/* Modal Body: Active file code viewer */}
-              <div className="flex-1 overflow-hidden p-5 flex flex-col min-h-0 bg-[#2c2c24]">
-                <pre className="w-full flex-1 overflow-auto text-[#d2d2c8] font-mono text-[10.5px] leading-relaxed p-4 bg-[#23231c] rounded-2xl border border-[#3a3a32] shadow-inner select-text">
-                  <code>
-                    {exporterTab === "vanilla" ? getThreeJsCode(params) : getReactThreeFiberCode(params)}
-                  </code>
-                </pre>
-              </div>
+              {/* Modal Body: Active file code viewer OR standard 3D Model cards */}
+              {exporterTab === "3d" ? (
+                <div className="flex-1 overflow-y-auto p-5 bg-[#fafaf6] text-[#44443a] flex flex-col gap-5 min-h-0">
+                  {/* Top explanation banner */}
+                  <div className="bg-[#5A5A40]/5 border border-[#5A5A40]/10 rounded-2xl p-4 flex gap-3.5 items-start shrink-0">
+                    <div className="p-2.5 bg-[#5A5A40]/10 text-[#5A5A40] rounded-xl shrink-0">
+                      <Box className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-xs text-[#2c2c24] flex items-center gap-1">
+                        <span>יצוא המודל התלת-מימדי שלך</span>
+                        <span className="font-mono text-[10px] text-[#8e8e7e] capitalize">({params.species} assets)</span>
+                      </h4>
+                      <p className="text-[11px] text-[#8e8e7e] leading-relaxed mt-1">
+                        יצא את הצמח הנוכחי כקובץ מודל תלת-מימדי אמיתי על בסיס כל הפרמטרים, הצורות והצבעים הפעילים שבחרת. הדגמים מפותחים ונוצרים בזמן אמת בפורמטים פופולריים שתוכל לגרור ישירות למנועי משחקים או תוכנות מידול!
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Two Main Download Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 shrink-0">
+                    
+                    {/* card 1: GLB */}
+                    <div className="bg-white border border-[#e2e2d8] hover:border-[#5A5A40]/40 p-5 rounded-2xl flex flex-col justify-between transition-all group hover:shadow-xs">
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] bg-[#5A5A40]/10 text-[#5A5A40] px-2.5 py-0.5 rounded-full font-bold tracking-wider font-mono">
+                            GLB Binary (.glb)
+                          </span>
+                          <span className="text-[10px] text-emerald-600 bg-emerald-50 border border-emerald-500/10 px-2 py-0.5 rounded font-semibold shrink-0">
+                            מומלץ ביותר (Color & Mesh)
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-xs text-[#2c2c24] mt-1">יצוא פורמט GLB צבעוני</h4>
+                        <p className="text-[11px] text-[#8e8e7e] leading-relaxed mt-1.5 min-h-[50px]">
+                          מייצא קובץ GLTF בינארי (.glb) מאוחד המכיל את כל הגיאומטריות ואת צבעי הצמח (Mesh Colors/Flat Materials). נפתח ישירות בבלנדר, יוניטי, גודו או אנריל עם צבעים מובנים בלי צורך בטקסטורות חיצוניות.
+                        </p>
+
+                        {/* Tech details stack */}
+                        <div className="flex flex-wrap gap-1.5 mt-3 text-[10px] font-mono text-[#8e8e7e] bg-[#f5f5f0] p-2 rounded-lg border border-[#e2e2d8]">
+                          <span className="flex items-center gap-1">📊 Model: {params.species}</span>
+                          <span>•</span>
+                          <span>🌈 Materials: MeshStandard</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleExportGLB}
+                        disabled={glbExporting}
+                        className="w-full mt-4 py-2 px-4 bg-[#5A5A40] hover:bg-[#4a4a34] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm disabled:opacity-50 active:scale-[0.98]"
+                      >
+                        {glbExporting ? (
+                          <>
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                            <span>מייצא קובץ GLB...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4 text-white" />
+                            <span>הורדת קובץ GLB</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* card 2: OBJ */}
+                    <div className="bg-white border border-[#e2e2d8] hover:border-[#5A5A40]/40 p-5 rounded-2xl flex flex-col justify-between transition-all group hover:shadow-xs">
+                      <div>
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] bg-[#44443a]/10 text-[#44443a] px-2.5 py-0.5 rounded-full font-bold tracking-wider font-mono">
+                            Wavefront OBJ (.obj)
+                          </span>
+                          <span className="text-[10px] text-[#8e8e7e] font-medium font-mono shrink-0">
+                            Standard Polygon Mesh
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-xs text-[#2c2c24] mt-1">יצוא פורמט OBJ קלאסי</h4>
+                        <p className="text-[11px] text-[#8e8e7e] leading-relaxed mt-1.5 min-h-[50px]">
+                          מייצא את פריסת הפוליגונים נקייה כפורמט גיאומטרי קלאסי. מעולה לייבוא לכל תוכנת תלת-מימד ישנה או חדשה, ומתאים במיוחד להרצה מהירה בתוכנות פריסה לקראת <b>הדפסה בתלת-מימד (3D Printing)</b>.
+                        </p>
+
+                        <div className="flex flex-wrap gap-1.5 mt-3 text-[10px] font-mono text-[#8e8e7e] bg-[#f5f5f0] p-2 rounded-lg border border-[#e2e2d8]">
+                          <span className="flex items-center gap-1">🛠️ Mesh: Polygonal</span>
+                          <span>•</span>
+                          <span>🖨️ Great for 3D Print</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={handleExportOBJ}
+                        className="w-full mt-4 py-2 px-4 bg-[#44443a] hover:bg-[#2c2c24] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm active:scale-[0.98]"
+                      >
+                        <Download className="w-4 h-4 text-white" />
+                        <span>הורדת קובץ OBJ</span>
+                      </button>
+                    </div>
+
+                  </div>
+
+                  {/* Tips list */}
+                  <div className="bg-[#fcfcf9] border border-[#e2e2d8] rounded-2xl p-4 shrink-0">
+                    <h5 className="font-bold text-xs text-[#2c2c24] flex items-center gap-1.5 mb-2">
+                      <span className="text-emerald-600 text-xs shrink-0">💡</span> טיפים לעבודה מהירה:
+                    </h5>
+                    <ul className="text-[10.5px] text-[#8e8e7e] leading-relaxed space-y-1.5 list-disc pl-4 pr-1">
+                      <li>
+                        <b>תאימות חומרים:</b> קובץ ה-<b>GLB</b> נושא את ערכי הצבעים הפרוצדוריים (Vertex Colors/Materials). בבלנדר וביוניטי מומלץ לוודא שתצוגת החומרים מאופשרת כדי לראות את הצבעים על גבי הפוליגונים.
+                      </li>
+                      <li>
+                        <b>שינוי קנה מידה:</b> הדגם מיוצא ביחידות מטרים (למשל, גזע של 4.5 מטרים מתוצר כ-4.5 יחידות). ניתן לעשות לו Scale קל בתוכנת היעד בהתאם לצורכי המשחק או הפרויקט שלך.
+                      </li>
+                    </ul>
+                  </div>
+
+                </div>
+              ) : (
+                <div className="flex-1 overflow-hidden p-5 flex flex-col min-h-0 bg-[#2c2c24]">
+                  <pre className="w-full flex-1 overflow-auto text-[#d2d2c8] font-mono text-[10.5px] leading-relaxed p-4 bg-[#23231c] rounded-2xl border border-[#3a3a32] shadow-inner select-text">
+                    <code>
+                      {exporterTab === "vanilla" ? getThreeJsCode(params) : getReactThreeFiberCode(params)}
+                    </code>
+                  </pre>
+                </div>
+              )}
 
               {/* Modal Footer helper */}
               <div className="p-4 bg-[#fafaf6] border-t border-[#e2e2d8] flex flex-col sm:flex-row justify-between items-center gap-3 shrink-0 text-[10.5px] text-[#8e8e7e] font-medium leading-relaxed">
                 <span className="flex items-center gap-1">
-                  💡 <b>No-Scrape</b>: Generates single-species optimized math matrices. No external textures needed!
+                  💡 <b>Real-time Engine</b>: הדגמים מפותחים ונוצרים ישירות מהפרמטרים הפעילים בזמן לחיצה על כפתורי הייצוא.
                 </span>
                 <button
                   onClick={() => setShowCodeModal(false)}
@@ -1024,6 +1425,212 @@ export default function Home() {
                   Close Workbench
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* 2. CUSTOM UPLOAD & SANDBOX NURSERY MODAL */}
+      <AnimatePresence>
+        {showUploadModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowUploadModal(false)}
+              className="absolute inset-0 bg-neutral-900/60 backdrop-blur-xs"
+            />
+
+            {/* Modal Body container */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              transition={{ type: "spring", duration: 0.4 }}
+              className="bg-white w-full max-w-2xl rounded-3xl border border-[#e2e2d8] shadow-2xl overflow-hidden flex flex-col max-h-[85vh] relative z-10"
+            >
+              {/* Modal header */}
+              <div className="p-5 border-b border-[#ecece4] bg-[#fafaf6] flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-[#5A5A40]/10 text-[#5A5A40] rounded-xl flex items-center justify-center">
+                    <Upload className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-[#2c2c24] text-right">מרכז העלאת קבצים ובדיקת יער</h3>
+                    <p className="text-[10px] text-[#8e8e7e] mt-0.5 text-right">סריקה והרצה של מודלים תלת-מימדיים ופרמטרים מותאמים אישית</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowUploadModal(false)}
+                  className="p-2 rounded-xl text-[#8e8e7e] hover:text-[#2c2c24] hover:bg-[#ecece4] transition-all cursor-pointer mr-auto"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Modal scrollable body */}
+              <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5 min-h-0 text-right" dir="rtl">
+                
+                {/* Visual Description */}
+                <div className="bg-[#5A5A40]/5 border border-[#5A5A40]/10 rounded-2xl p-4 flex gap-3.5 items-start">
+                  <div className="p-2.5 bg-[#5A5A40]/10 text-[#5A5A40] rounded-xl shrink-0 flex items-center justify-center">
+                    <Trees className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-[#2c2c24] flex items-center gap-1">
+                      <span>מיזוג תוכן חיצוני בסימולטור</span>
+                    </h4>
+                    <p className="text-[11px] text-[#8e8e7e] leading-relaxed mt-1">
+                      המערכת מאפשרת להעלות קובצי צמח שיצרת, או מודלים חיצוניים בפורמטים נפוצים. המודלים נשמרים בזיכרון המקומי של הדפדפן ומשתלבים באופן פרוצדורלי כצמחייה אורגנית בתוך <b>היער התלת-מימדי</b> לצד שאר הצמחים.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Upload Trigger area */}
+                <div className="flex flex-col gap-2">
+                  <span className="text-[11px] font-bold text-[#2c2c24] pr-1">העלאת קובץ חדש:</span>
+                  <div className="flex flex-col sm:flex-row items-center gap-3 bg-[#fafaf6] border border-[#e2e2d8] p-4 rounded-2xl">
+                    <input
+                      id="dialog-file-input"
+                      type="file"
+                      accept=".json,.glb,.obj"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                          handleFileUpload(e.target.files[0]);
+                        }
+                      }}
+                    />
+                    <button
+                      onClick={() => {
+                        const fileInput = document.getElementById("dialog-file-input");
+                        if (fileInput) fileInput.click();
+                      }}
+                      className="w-full sm:w-auto py-2.5 px-5 bg-[#5A5A40] hover:bg-[#4a4a34] text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs active:scale-[0.98] shrink-0"
+                    >
+                      <Upload className="w-4 h-4 text-white" />
+                      <span>בחר קובץ (.glb, .obj, .json)</span>
+                    </button>
+                    <p className="text-[11px] text-[#8e8e7e] leading-relaxed flex-1 text-right">
+                      תומך בקובצי <b className="font-mono text-[#5A5A40]" dir="ltr">.glb</b>, <b className="font-mono text-[#5A5A40]" dir="ltr">.obj</b> או קובצי <b className="font-mono text-[#5A5A40]" dir="ltr">.json</b> של הגדרות.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status response alerts */}
+                {(uploadError || uploadSuccess) && (
+                  <div className="space-y-2 mt-1">
+                    {uploadError && (
+                      <div className="bg-red-500/10 border border-red-500/20 text-red-600 rounded-xl p-3 text-[10.5px] leading-relaxed">
+                        ⚠️ <b>שגיאת טעינה:</b> {uploadError}
+                      </div>
+                    )}
+                    {uploadSuccess && (
+                      <div className="bg-emerald-500/10 border border-emerald-500/17 text-emerald-700 rounded-xl p-3 text-[10.5px] leading-relaxed">
+                        🌱 <b>הצלחה:</b> {uploadSuccess}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Models Catalog section */}
+                <div className="space-y-3 mt-2">
+                  <h4 className="text-[11px] uppercase font-bold text-[#8e8e7e] tracking-wider flex items-center gap-1.5 justify-start">
+                    <span>קטלוג המודלים הטעונים שלך</span>
+                    <span className="font-mono bg-[#fafaf6] px-1.5 py-0.5 rounded text-[9.5px]">({uploadedModels.length})</span>
+                  </h4>
+
+                  {uploadedModels.length === 0 ? (
+                    <div className="text-center py-6 px-4 bg-[#fafaf6] border border-[#e2e2d8] rounded-2xl text-[10.5px] text-[#8e8e7e] italic">
+                      אין מודלים טעונים כרגע במרכז ההעלאות.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[220px] overflow-y-auto pl-1">
+                      {uploadedModels.map((model) => {
+                        const isActive = model.id === activeUploadedId;
+                        return (
+                          <div
+                            key={model.id}
+                            className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${
+                              isActive
+                                ? "bg-[#5A5A40]/10 border-[#5A5A40]/40 shadow-xs"
+                                : "bg-white border-[#e2e2d8] hover:border-[#a8a896]"
+                            }`}
+                          >
+                            <button
+                              onClick={() => {
+                                setActiveUploadedId(model.id);
+                                setUploadSuccess(`מציג כעת במרכז הבדיקה את המודל: ${model.name}`);
+                              }}
+                              className="flex-1 text-right flex items-center gap-2 min-w-0"
+                            >
+                              <span className={`w-2 h-2 rounded-full ${model.type === "glb" ? "bg-amber-400" : "bg-sky-400"} shrink-0`} />
+                              <div className="text-right min-w-0 flex-1">
+                                <p className="text-[11.5px] font-bold text-[#2c2c24] truncate leading-tight">
+                                  {model.name}
+                                </p>
+                                <p className="text-[9.5px] text-[#8e8e7e] font-mono leading-none mt-1 flex items-center gap-1" dir="ltr">
+                                  <span className="bg-neutral-100 px-1 py-0.2 rounded font-semibold text-neutral-600 uppercase text-[8px]">{model.type}</span>
+                                  <span>•</span>
+                                  <span>{model.fileSize}</span>
+                                  <span>•</span>
+                                  <span className="text-emerald-700 font-bold">{model.verticesCount.toLocaleString()} Poly</span>
+                                </p>
+                              </div>
+                            </button>
+                            
+                            <div className="flex items-center gap-1.5 shrink-0 mr-2">
+                              <span 
+                                className={`text-[10px] px-2 py-0.5 rounded cursor-pointer font-bold transition-all ${
+                                  isActive 
+                                    ? "bg-[#5A5A40] text-white" 
+                                    : "bg-neutral-100 text-[#8e8e7e] hover:bg-neutral-200"
+                                }`}
+                                onClick={() => {
+                                  setActiveUploadedId(model.id);
+                                  setUploadSuccess(`מציג כעת במרכז הבדיקה את המודל: ${model.name}`);
+                                }}
+                              >
+                                {isActive ? "בבדיקה" : "בחן דגם"}
+                              </span>
+                              <button
+                                onClick={() => deleteUploadedModel(model.id)}
+                                className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all cursor-pointer flex items-center justify-center"
+                                title="מחק מודל"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {uploadedModels.length > 0 && (
+                    <div className="p-3 bg-[#7cb342]/10 border border-[#7cb342]/15 text-[#558b2f] rounded-2xl text-[10.5px] leading-relaxed font-semibold">
+                      💡 <b>חיבור יער תלת-מימדי:</b> המודלים שהעלית נשמרו בהצלחה במרכז המחקר ונשתלו ברחבי ה-<b>יער הפרוצדורלי (Forest)</b>! העבר את מסך התצוגה הראשי למצב יער כדי לראות את הדגמים שלך משולבים בטבע התלת-מימדי.
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* Modal footer */}
+              <div className="p-4 bg-[#fafaf6] border-t border-[#e2e2d8] flex justify-between items-center gap-3">
+                <span className="text-[10px] text-[#8e8e7e] font-semibold leading-relaxed">
+                  העלאת קבצים תקינה למרכז הבדיקות
+                </span>
+                <button
+                  onClick={() => setShowUploadModal(false)}
+                  className="px-4 py-2 bg-[#5A5A40] hover:bg-[#4a4a34] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shrink-0 active:scale-95"
+                >
+                  סיים ועבור לתצוגה
+                </button>
+              </div>
+
             </motion.div>
           </div>
         )}
